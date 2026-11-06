@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#123D22">
+<title>Xemlohy Smart Rewards · Neo Crop Solutions</title>
+<meta name="description" content="Program poin Xemlohy Smart Rewards dari PT Neo Crop Solutions segera hadir.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23F2B544'/%3E%3Cpath d='M10 22c2-7 6-11 12-12-1 6-5 10-12 12z' fill='%23123D22'/%3E%3C/svg%3E">
+<style>
+  :root { --green:#123D22; --green2:#1F6B3A; --tint:#E6F0E3; --gold:#F2B544; --goldtint:#FFF4DC; --ink:#17211B; --muted:#4B5A50; --line:#D5DDD3; --bg:#F6F7F2; --red:#A3261B; --redtint:#FBE9E7; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; line-height: 1.5; }
+  .wrap { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+  header { background: var(--green); color: #fff; padding: 18px 20px; display: flex; align-items: center; gap: 12px; }
+  header b { display: block; font-size: 16px; }
+  header span { font-size: 13px; color: #CFE3D2; }
+  main { flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  h1 { font-size: 22px; line-height: 1.25; margin: 0 0 8px; }
+  p { margin: 0 0 10px; font-size: 15px; }
+  p:last-child { margin-bottom: 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; background: var(--goldtint); color: #5A3B00; font-weight: 700; font-size: 13px; padding: 6px 12px; border-radius: 999px; margin-bottom: 12px; }
+  .code { display: none; background: var(--tint); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+  .code small { display: block; font-size: 12px; color: var(--muted); }
+  .code strong { font-size: 22px; letter-spacing: 0.06em; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--green); }
+  .code.bad { background: var(--redtint); }
+  .code.bad strong { color: var(--red); }
+  .steps { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 12px; }
+  .steps li { display: flex; gap: 12px; align-items: flex-start; }
+  .num { flex: 0 0 34px; height: 34px; border-radius: 50%; background: var(--green2); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .steps b { display: block; font-size: 15px; }
+  .steps span { font-size: 14px; color: var(--muted); }
+  h2 { font-size: 17px; margin: 0 0 10px; }
+  .btn { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; border-radius: 12px; background: var(--green2); color: #fff; font-weight: 700; font-size: 16px; text-decoration: none; }
+  .btn.alt { background: #fff; color: var(--green); border: 1.5px solid #9DB0A2; }
+  .btns { display: grid; gap: 10px; }
+  footer { padding: 16px 20px 28px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+  footer a { color: var(--green2); }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#F2B544"/><path d="M10 22c2-7 6-11 12-12-1 6-5 10-12 12z" fill="#123D22"/></svg>
+    <div><b>Xemlohy Smart Rewards</b><span>by Neo Crop Solutions</span></div>
+  </header>
+
+  <main>
+    <section class="card" aria-labelledby="judul">
+      <div class="pill">Segera hadir</div>
+      <h1 id="judul">Terima kasih telah memilih Xemlohy</h1>
+      <p id="pesan">Program poin Xemlohy Smart Rewards akan segera dibuka. Setiap botol Xemlohy dengan kode QR bisa ditukar poin, lalu poin ditukar hadiah.</p>
+      <p id="simpan" class="hide"><b>Simpan botol atau foto kode di bawah ini.</b> Kode ini bisa diklaim saat program dibuka.</p>
+
+      <div class="code" id="kodebox" aria-live="polite">
+        <small id="kodelabel">Kode Anda</small>
+        <strong id="kode"></strong>
+        <small id="kodenote"></small>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="cara">
+      <h2 id="cara">Cara ikut program</h2>
+      <ol class="steps">
+        <li><div class="num">1</div><div><b>Gosok</b><span>Gosok panel pada label botol Xemlohy untuk membuka kode QR.</span></div></li>
+        <li><div class="num">2</div><div><b>Scan</b><span>Scan kode QR dengan kamera HP. Tidak perlu install aplikasi.</span></div></li>
+        <li><div class="num">3</div><div><b>Dapat poin</b><span>Masuk dengan nomor WhatsApp, kumpulkan poin, tukar dengan hadiah.</span></div></li>
+      </ol>
+    </section>
+
+    <section class="card" aria-labelledby="info">
+      <h2 id="info">Ingin kabar saat program dibuka?</h2>
+      <p class="muted">Hubungi tim NeoCare atau ikuti Instagram kami untuk info terbaru.</p>
+      <div class="btns">
+        <a class="btn" href="https://wa.me/6281517733335?text=Halo%20NeoCare%2C%20saya%20ingin%20info%20program%20Xemlohy%20Smart%20Rewards." rel="noopener">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-13.5 7.8L3 21l1.3-4.4A9 9 0 1 1 21 12z"/></svg>
+          Chat WhatsApp NeoCare
+        </a>
+        <a class="btn alt" href="https://www.instagram.com/neocropsolutions_id/" rel="noopener">Instagram @neocropsolutions_id</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    PT Neo Crop Solutions · Satrio Tower Lt. 26, Jakarta Selatan ·
+    <a href="mailto:neocare.indonesia@neocropsolutions.com">neocare.indonesia@neocropsolutions.com</a><br>
+    Prosperity Through Efficient Agriculture
+  </footer>
+</div>
+
+<script>
+  // Reads the code from the scanned link (/b/CODE for bottles, /c/CODE for cartons).
+  // It only checks the code's format and check character. It does NOT confirm the product
+  // is genuine: the list of genuine codes is never put on this page.
+  (function () {
+    var ALPHA = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+    var m = location.pathname.match(/^\/([bc])\/([^\/?#]+)\/?$/i);
+    if (!m) return;
+    var type = m[1].toLowerCase();
+    var raw = decodeURIComponent(m[2]).toUpperCase().replace(/[^0-9A-Z]/g, "");
+    var box = document.getElementById("kodebox");
+    var kode = document.getElementById("kode");
+    var note = document.getElementById("kodenote");
+    var label = document.getElementById("kodelabel");
+
+    function valid(c) {
+      if (c.length !== 11) return false;
+      var sum = 0;
+      for (var i = 0; i < 11; i++) { if (ALPHA.indexOf(c.charAt(i)) < 0) return false; }
+      for (var j = 0; j < 10; j++) { sum += (j + 1) * ALPHA.indexOf(c.charAt(j)); }
+      return ALPHA.charAt(sum % 31) === c.charAt(10);
+    }
+
+    box.style.display = "block";
+    if (valid(raw)) {
+      kode.textContent = raw.slice(0, 5) + "-" + raw.slice(5, 10) + "-" + raw.slice(10);
+      document.getElementById("simpan").className = "";
+      if (type === "c") {
+        label.textContent = "Kode karton (untuk Mitra Retailer)";
+        note.textContent = "Poin karton untuk retailer juga akan dibuka bersama program.";
+        document.getElementById("simpan").innerHTML = "<b>Mitra Retailer: simpan karton atau foto kode di bawah ini.</b> Kode ini bisa diklaim saat program dibuka.";
+      } else {
+        note.textContent = "Kode botol Xemlohy";
+      }
+    } else {
+      box.className = "code bad";
+      label.textContent = "Kode tidak dikenali";
+      kode.textContent = raw ? raw.slice(0, 16) : "-";
+      note.textContent = "Periksa kembali kode di bawah QR. Jika ragu, hubungi NeoCare lewat WhatsApp.";
+    }
+  })();
+</script>
+</body>
+</html>
