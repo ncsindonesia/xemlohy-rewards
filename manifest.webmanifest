@@ -1,0 +1,15 @@
+{
+  "name": "Xemlohy Smart Rewards",
+  "short_name": "Xemlohy Poin",
+  "description": "Scan botol Xemlohy, kumpulkan poin, tukar hadiah.",
+  "start_url": "/akun",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F6F7F2",
+  "theme_color": "#123D22",
+  "lang": "id",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
