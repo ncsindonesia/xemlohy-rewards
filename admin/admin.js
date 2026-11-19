@@ -1,4 +1,4 @@
-/* Xemlohy Smart Rewards - NCS admin portal (staff only). Requires Supabase. */
+/* NCS Program Rewards - NCS admin portal (staff only). Requires Supabase. */
 (function () {
   "use strict";
   var CFG = window.XEM_CONFIG || {};
@@ -10,6 +10,8 @@
   function num(n) { return Number(n || 0).toLocaleString("id-ID"); }
   function dt(x, t) { if (!x) return ""; var o = { day: "numeric", month: "short", year: "numeric" }; if (t) { o.hour = "2-digit"; o.minute = "2-digit"; } return new Date(x).toLocaleDateString("id-ID", o); }
   function phone(p) { return p ? "0" + String(p).slice(2) : ""; }
+  function waTo(p, text) { return "https://wa.me/" + String(p || "").replace(/\D/g, "") + (text ? "?text=" + encodeURIComponent(text) : ""); }
+  function waBtn(p) { return p ? ' <a class="wa-link" href="' + waTo(p) + '" target="_blank" rel="noopener" title="Chat WhatsApp">WA</a>' : ""; }
   function toast(m) { var t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(function () { t.remove(); }, 2800); }
   function can(roles) { return ME && roles.indexOf(ME.role) >= 0; }
   function rpc(fn, args) { return sb.rpc(fn, args || {}).then(function (r) { if (r.error) throw new Error(r.error.message); return r.data; }); }
@@ -47,6 +49,7 @@
   var PAGES = [
     ["dashboard", "Dashboard", ["admin", "field", "viewer"]],
     ["penukaran", "Penukaran", ["admin", "viewer"]],
+    ["pesan", "Pesan WA", ["admin", "viewer"]],
     ["retailer", "Verifikasi retailer", ["admin", "field"]],
     ["review", "Poin ditahan", ["admin", "viewer"]],
     ["anggota", "Anggota", ["admin", "field", "viewer"]],
@@ -57,7 +60,7 @@
   ];
   var badges = {};
   function shell(active, body) {
-    root.innerHTML = '<div class="wrap"><nav class="side" aria-label="Menu admin"><div class="brand"><svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#F2B544"/><path d="M10 22c2-7 6-11 12-12-1 6-5 10-12 12z" fill="#123D22"/></svg><div><b>Xemlohy Rewards</b><span>Admin NCS</span></div></div>' +
+    root.innerHTML = '<div class="wrap"><nav class="side" aria-label="Menu admin"><div class="brand"><svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#F2B544"/><path d="M10 22c2-7 6-11 12-12-1 6-5 10-12 12z" fill="#123D22"/></svg><div><b>NCS Program Rewards</b><span>Admin NCS</span></div></div>' +
       PAGES.filter(function (p) { return can(p[2]); }).map(function (p) {
         return '<a href="#' + p[0] + '"' + (p[0] === active ? ' aria-current="page"' : "") + ">" + esc(p[1]) + (badges[p[0]] ? '<span class="badge">' + num(badges[p[0]]) + "</span>" : "") + "</a>";
       }).join("") + '<div class="who">' + esc(ME.name) + " · " + esc(ME.role) + '<br><button id="logout">Keluar</button></div></nav><main class="main" id="main">' + body + "</main></div>";
@@ -67,14 +70,14 @@
     var h = (location.hash || "#dashboard").slice(1).split("?")[0];
     var p = PAGES.filter(function (x) { return x[0] === h && can(x[2]); })[0] || PAGES[0];
     shell(p[0], '<div class="spinner"></div>');
-    ({ dashboard: pDashboard, penukaran: pRedemptions, retailer: pRetailers, review: pReview, anggota: pMembers, kode: pCodes, hadiah: pRewards,
+    ({ dashboard: pDashboard, penukaran: pRedemptions, pesan: pWa, retailer: pRetailers, review: pReview, anggota: pMembers, kode: pCodes, hadiah: pRewards,
        laporan: pReports, pengaturan: pSettings })[p[0]]().catch(function (e) { $("#main").innerHTML = errBox(e.message); });
   }
   window.addEventListener("hashchange", function () { if (ME) route(); });
   function setMain(html) { var m = $("#main"); if (m) m.innerHTML = html; return m; }
   function refreshBadges() {
     return rpc("admin_stats").then(function (s) {
-      badges = { penukaran: s.redemptions_open, retailer: s.retailers_pending, review: s.review_open, laporan: s.reports_new + s.flags_open };
+      badges = { pesan: s.wa_todo, penukaran: s.redemptions_open, retailer: s.retailers_pending, review: s.review_open, laporan: s.reports_new + s.flags_open };
       return s;
     });
   }
@@ -128,10 +131,10 @@
         [["open", "Terbuka"], ["requested", "Diminta"], ["approved", "Disetujui"], ["shipped", "Dikirim"], ["completed", "Selesai"], ["rejected", "Ditolak"], ["all", "Semua"]].map(function (o) {
           return '<option value="' + o[0] + '"' + (o[0] === st ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") +
         '</select><button class="btn ghost" id="exp">Ekspor CSV</button></div></div>' +
-        '<p class="muted">Pulsa: kirim lewat penyedia pulsa, lalu tandai Selesai. Barang: Setujui → Kirim (isi resi) → Selesai. Tolak = poin otomatis dikembalikan ke anggota.</p>' +
+        '<p class="muted">Pulsa: kirim lewat penyedia pulsa ke nomor terdaftar, lalu tandai Selesai. Barang: Setujui → Kirim (isi resi) → Selesai. Tolak = poin otomatis dikembalikan ke anggota. Setiap perubahan status otomatis membuat pesan WhatsApp ke anggota (menu Pesan WA).</p>' +
         '<section class="card">' + table([
           { t: "Tanggal", f: function (r) { return esc(dt(r.created_at, true)); } },
-          { t: "Anggota", f: function (r) { return esc(r.member_name) + '<div class="muted">' + esc(phone(r.phone)) + " · " + esc(r.regency || "") + "</div>"; } },
+          { t: "Anggota", f: function (r) { return esc(r.member_name) + '<div class="muted">' + esc(phone(r.phone)) + waBtn(r.phone) + " · " + esc(r.regency || "") + "</div>"; } },
           { t: "Hadiah", f: function (r) { return esc(r.reward_name) + '<div class="muted">' + num(r.points) + " poin</div>"; } },
           { t: "Kirim ke", f: function (r) { return r.delivery === "pulsa" ? "Pulsa " + esc(phone(r.pulsa_phone)) : (r.delivery === "pickup" ? "Ambil di: " : "Alamat: ") + esc(r.address || "") + (r.note ? '<div class="muted">Catatan: ' + esc(r.note) + "</div>" : ""); } },
           { t: "Status", f: function (r) { var s = RST[r.status]; return '<span class="pill ' + s[0] + '">' + s[1] + "</span>" + (r.tracking ? '<div class="muted">Resi ' + esc(r.tracking) + "</div>" : "") + (r.admin_note ? '<div class="muted">' + esc(r.admin_note) + "</div>" : ""); } },
@@ -161,6 +164,70 @@
     });
   }
 
+
+  // ------------------------------------------------------------- WhatsApp messages
+  var WAK = { welcome: "Selamat datang", points: "Poin masuk", redeem_requested: "Penukaran diterima", redeem_approved: "Penukaran disetujui",
+    redeem_shipped: "Hadiah dikirim", redeem_completed: "Penukaran selesai", redeem_rejected: "Penukaran ditolak", retailer_verified: "Toko terverifikasi",
+    retailer_rejected: "Toko ditolak", review_approved: "Poin tertahan disetujui", review_rejected: "Poin tertahan ditolak", points_adjusted: "Penyesuaian poin",
+    member_blocked: "Akun dibekukan", member_active: "Akun diaktifkan", report: "Laporan diterima", test: "Tes" };
+  var WAS = { manual: ["warn", "Perlu dikirim"], new: ["warn", "Perlu dikirim"], queued: ["", "Diproses gateway"], sent: ["grey", "Terkirim"], failed: ["bad", "Gagal"], skipped: ["grey", "Dilewati"] };
+  function pWa() {
+    var st = (location.hash.split("?s=")[1]) || "todo";
+    return rpc("admin_wa_outbox", { p_status: st }).then(function (d) {
+      var admin = can(["admin"]), c = d.counts || {}, auto = d.provider === "fonnte";
+      var todo = (c.manual || 0) + (c.new || 0) + (c.failed || 0);
+      var warn = !d.notify ? "Pengiriman WhatsApp sedang dimatikan (wa_notify = false): tidak ada pesan baru yang dibuat." :
+        auto && !d.token_set ? "Mode otomatis dipilih tetapi token Fonnte belum diisi: pesan masuk daftar manual." :
+        auto && !d.net_ready ? "Ekstensi pg_net belum aktif di Supabase: pesan masuk daftar manual. Jalankan ulang 01_schema.sql atau aktifkan pg_net di Database > Extensions." : "";
+      setMain('<div class="head"><h1>Pesan WhatsApp ke anggota</h1><div class="toolbar"><select class="input" id="st">' +
+        [["todo", "Perlu dikirim (" + todo + ")"], ["queued", "Diproses gateway"], ["sent", "Terkirim"], ["failed", "Gagal"], ["skipped", "Dilewati"], ["all", "Semua"]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (o[0] === st ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select></div></div>" +
+        '<section class="card"><h2>Cara kirim: ' + (auto ? "otomatis lewat Fonnte" : "manual oleh admin") + "</h2>" +
+        '<p class="muted">' + (auto ? "Pesan dikirim otomatis dari nomor WhatsApp yang terhubung di Fonnte. Pesan yang gagal muncul di daftar Perlu dikirim."
+          : "Setiap ada poin masuk, penukaran, atau perubahan status, pesan siap kirim muncul di bawah. Klik <b>Buka WhatsApp</b> (pesan sudah terisi), kirim, lalu klik <b>Terkirim</b>.") +
+        " Pesan poin digabung: beberapa scan dalam ±1 menit menjadi satu pesan berisi total poin.</p>" + (warn ? errBox(warn) : "") +
+        (admin ? '<div class="toolbar" style="margin-top:10px"><label>Cara kirim <select class="input" id="prov"><option value="manual">Manual oleh admin</option><option value="fonnte">Otomatis (Fonnte)</option></select></label>' +
+          '<label>Token Fonnte <input class="input" id="tok" type="password" autocomplete="off" placeholder="' + (d.token_set ? "sudah tersimpan (isi untuk ganti)" : "tempel token dari fonnte.com") + '"></label>' +
+          '<button class="btn ghost" id="tok-save">Simpan</button>' + (d.token_set ? '<button class="btn ghost" id="tok-del">Hapus token</button>' : "") + "</div>" +
+          '<div class="toolbar" style="margin-top:8px"><label><input type="checkbox" id="notify"' + (d.notify ? " checked" : "") + "> Kirim pesan WhatsApp ke anggota</label>" +
+          '<input class="input" id="test-ph" placeholder="No. HP untuk tes, mis. 0812..." style="max-width:220px"><button class="btn ghost" id="test">Kirim pesan tes</button></div>' : "") +
+        "</section>" +
+        '<section class="card">' + table([
+          { t: "Waktu", f: function (r) { return esc(dt(r.created_at, true)) + (r.sent_at ? '<div class="muted">terkirim ' + esc(dt(r.sent_at, true)) + "</div>" : ""); } },
+          { t: "Kepada", f: function (r) { return esc(r.member_type === "retailer" && r.shop_name ? r.shop_name : (r.name || "-")) + '<div class="muted">' + esc(phone(r.phone)) + "</div>"; } },
+          { t: "Jenis", f: function (r) { return esc(WAK[r.kind] || r.kind); } },
+          { t: "Pesan", f: function (r) { return '<div class="wa-msg">' + esc(r.message) + "</div>"; } },
+          { t: "Status", f: function (r) { var s = WAS[r.status] || ["", r.status]; return '<span class="pill ' + s[0] + '">' + s[1] + "</span>" + (r.status === "failed" && r.response ? '<div class="muted">' + esc(r.response) + "</div>" : ""); } },
+          { t: "", f: function (r) {
+            if (!admin || ["manual", "new", "failed"].indexOf(r.status) < 0) return "";
+            return '<div class="btns"><a class="btn sm" target="_blank" rel="noopener" data-open="' + r.id + '" href="' + esc(waTo(r.phone, r.message)) + '">Buka WhatsApp</a>' +
+              '<button class="btn sm ghost" data-mark="sent" data-id="' + r.id + '">Terkirim</button>' +
+              (auto ? '<button class="btn sm ghost" data-resend="' + r.id + '">Kirim ulang otomatis</button>' : "") +
+              '<button class="btn sm ghost" data-mark="skipped" data-id="' + r.id + '">Lewati</button></div>'; } }
+        ], d.rows) + "</section>");
+      $("#st").onchange = function () { location.hash = "pesan?s=" + this.value; };
+      if (!admin) return;
+      $("#prov").value = d.provider;
+      $("#prov").onchange = function () { rpc("admin_save_setting", { p_key: "wa_provider", p_value: this.value }).then(function () { toast("Tersimpan"); route(); }).catch(function (e) { toast(e.message); }); };
+      $("#notify").onchange = function () { rpc("admin_save_setting", { p_key: "wa_notify", p_value: this.checked }).then(function () { toast("Tersimpan"); route(); }).catch(function (e) { toast(e.message); }); };
+      $("#tok-save").onclick = function () { var v = $("#tok").value.trim(); if (!v) return toast("Tempel token dulu"); rpc("admin_wa_set_token", { p_token: v }).then(function () { toast("Token tersimpan"); route(); }).catch(function (e) { toast(e.message); }); };
+      if ($("#tok-del")) $("#tok-del").onclick = function () { rpc("admin_wa_set_token", { p_token: "" }).then(function () { toast("Token dihapus"); route(); }); };
+      $("#test").onclick = function () {
+        rpc("admin_wa_test", { p_phone: $("#test-ph").value }).then(function (r) {
+          toast(r.result === "queued" ? "Pesan tes dikirim ke Fonnte. Cek status di daftar Semua dalam 1 menit." : "Pesan tes masuk daftar Perlu dikirim (mode manual).");
+          setTimeout(route, 1500);
+        }).catch(function (e) { toast(e.message); });
+      };
+      $all("[data-open]").forEach(function (a) { a.addEventListener("click", function () { var b = $('[data-mark="sent"][data-id="' + a.getAttribute("data-open") + '"]'); if (b) b.classList.remove("ghost"); }); });
+      $all("[data-mark]").forEach(function (b) {
+        b.onclick = function () { rpc("admin_wa_mark", { p_ids: [+b.getAttribute("data-id")], p_status: b.getAttribute("data-mark") }).then(function () { b.closest("tr").remove(); refreshBadges(); }).catch(function (e) { toast(e.message); }); };
+      });
+      $all("[data-resend]").forEach(function (b) {
+        b.onclick = function () { rpc("admin_wa_resend", { p_id: +b.getAttribute("data-resend") }).then(function (r) { toast(r.result === "queued" ? "Dikirim ulang" : "Gateway belum siap, tetap manual"); setTimeout(route, 1200); }).catch(function (e) { toast(e.message); }); };
+      });
+    });
+  }
+
   // ------------------------------------------------------------- retailers
   function pRetailers() {
     return Promise.all([rpc("admin_members", { p_type: "retailer", p_status: "pending", p_search: null }), rpc("admin_members", { p_type: "retailer", p_status: "active", p_search: null })]).then(function (r) {
@@ -168,7 +235,7 @@
       setMain('<div class="head"><h1>Verifikasi retailer</h1></div><p class="muted">Kunjungi atau telepon toko, cek nama, alamat dan lokasi, lalu verifikasi. Karton yang sudah di-scan akan masuk masa tunggu ' +
         "sejak tanggal scan.</p><section class=\"card\"><h2>Menunggu verifikasi (" + pend.length + ")</h2>" + table([
           { t: "Daftar", f: function (m) { return esc(dt(m.created_at)); } },
-          { t: "Toko", f: function (m) { return "<b>" + esc(m.shop_name) + "</b><div class=\"muted\">" + esc(m.owner_name) + " · " + esc(phone(m.phone)) + "</div>"; } },
+          { t: "Toko", f: function (m) { return "<b>" + esc(m.shop_name) + "</b><div class=\"muted\">" + esc(m.owner_name) + " · " + esc(phone(m.phone)) + waBtn(m.phone) + "</div>"; } },
           { t: "Alamat", f: function (m) { return esc(m.address) + '<div class="muted">' + esc([m.district, m.regency, m.province].filter(Boolean).join(", ")) + "</div>" +
               (m.lat ? '<a href="https://maps.google.com/?q=' + m.lat + "," + m.lng + '" target="_blank" rel="noopener">Lihat di peta</a>' : ""); } },
           { t: "Distributor", f: function (m) { return esc(m.distributor); } },
@@ -224,6 +291,7 @@
           { t: "No HP", f: function (m) { return esc(phone(m.phone)); } },
           { t: "Jenis", f: function (m) { return m.type === "retailer" ? "Retailer" : "Petani"; } },
           { t: "Wilayah", f: function (m) { return esc([m.regency, m.province].filter(Boolean).join(", ")); } },
+          { t: "Beli di toko", f: function (m) { return esc(m.bought_from_text || ""); } },
           { t: "Scan", n: 1, f: function (m) { return num(m.scans); } },
           { t: "Poin", n: 1, f: function (m) { return num(m.available) + (m.pending ? '<div class="muted">+' + num(m.pending) + " tertahan</div>" : ""); } },
           { t: "Status", f: function (m) { var s = MST[m.status]; return '<span class="pill ' + s[0] + '">' + s[1] + "</span>"; } }
@@ -237,10 +305,11 @@
   var memo = {};
   function memberDetail(m) {
     rpc("admin_member_detail", { p_member: m.id }).then(function (d) {
-      var md = modal("<h2>" + esc(m.type === "retailer" ? m.shop_name : m.name) + '</h2><div class="muted">' + esc(phone(m.phone)) + " · " + (m.type === "retailer" ? "Retailer" : "Petani") + " · daftar " + esc(dt(m.created_at)) +
+      var md = modal("<h2>" + esc(m.type === "retailer" ? m.shop_name : m.name) + '</h2><div class="muted">' + esc(phone(m.phone)) + waBtn(m.phone) + " · " + (m.type === "retailer" ? "Retailer" : "Petani") + " · daftar " + esc(dt(m.created_at)) +
         "</div><div>" + esc([m.address, m.district, m.regency, m.province].filter(Boolean).join(", ")) + (m.crop ? " · Tanaman: " + esc(m.crop) : "") + (m.land_ha ? " · " + esc(m.land_ha) + " ha" : "") + "</div>" +
+        (m.bought_from_text ? '<div>Beli di toko: <b>' + esc(m.bought_from_text) + "</b></div>" : "") +
         '<div class="kpis">' + kpi(num(m.available), "Poin bisa dipakai") + kpi(num(m.pending), "Poin tertahan") + kpi(num(m.scans), "Scan") + "</div>" +
-        (can(["admin"]) ? '<div class="btns"><button class="btn ghost" id="adj">Sesuaikan poin</button><button class="btn ghost" id="pin">Reset PIN</button>' +
+        (can(["admin"]) ? '<div class="btns"><button class="btn ghost" id="adj">Sesuaikan poin</button>' +
           (m.status === "blocked" ? '<button class="btn" id="unb">Aktifkan</button>' : m.status === "active" ? '<button class="btn danger" id="blk">Bekukan</button>' : "") + "</div>" : "") +
         "<h3>Riwayat poin</h3>" + table([{ t: "Waktu", f: function (l) { return esc(dt(l.created_at, true)); } }, { t: "Jenis", f: function (l) { return esc(l.kind); } },
           { t: "Ref", f: function (l) { return '<span class="mono">' + esc(l.ref || "") + "</span>"; } }, { t: "Status", f: function (l) { return esc(l.status) + (l.available_at ? '<div class="muted">aktif ' + esc(dt(l.available_at)) + "</div>" : ""); } },
@@ -252,11 +321,6 @@
       if ($("#adj", md)) $("#adj", md).onclick = function () {
         act(ask("Sesuaikan poin", [{ key: "d", label: "Jumlah poin (+ tambah / - kurangi)", type: "number" }, { key: "n", label: "Alasan (wajib, dicatat di audit)", type: "textarea" }]).then(function (v) {
           if (!v) return false; return rpc("admin_adjust_points", { p_member: m.id, p_delta: parseInt(v.d, 10), p_note: v.n });
-        }));
-      };
-      if ($("#pin", md)) $("#pin", md).onclick = function () {
-        act(ask("Reset PIN anggota", [{ key: "p", label: "PIN baru 6 angka (beri tahu anggota lewat telepon/WA, minta ganti setelah masuk)", placeholder: "misal 482913" }], "Reset PIN").then(function (v) {
-          if (!v) return false; return rpc("admin_reset_pin", { p_member: m.id, p_pin: v.p });
         }));
       };
       if ($("#blk", md)) $("#blk", md).onclick = function () { act(ask("Bekukan akun", [{ key: "n", label: "Alasan", type: "textarea" }], "Bekukan").then(function (v) { if (!v) return false; return rpc("admin_set_member_status", { p_member: m.id, p_status: "blocked", p_note: v.n }); })); };
@@ -302,7 +366,7 @@
           { t: "Sudah diklaim", n: 1, f: function (r) { return num(r.redeemed); } }, { t: "Void", n: 1, f: function (r) { return num(r.void); } },
           { t: "", f: function (r, i) { return admin ? '<div class="btns">' + (r.generated ? '<button class="btn sm" data-act="1" data-k="' + esc(JSON.stringify([r.code_batch, r.sku, r.type])) + '">Aktifkan ' + num(r.generated) + "</button>" : "") +
               (r.activated ? '<button class="btn sm ghost" data-act="0" data-k="' + esc(JSON.stringify([r.code_batch, r.sku, r.type])) + '">Nonaktifkan</button>' : "") + "</div>" : ""; } }], rows) + "</section>" +
-        (admin ? '<section class="card"><h2>Import kode dari file CSV</h2><p class="muted">Pilih file <b>Xemlohy_QR_Import_Codes.csv</b> atau file CSV dari printer. Kode yang sudah ada dilewati otomatis, jadi aman diimpor ulang.</p>' +
+        (admin ? '<section class="card"><h2>Import kode dari file CSV</h2><p class="muted">Pilih file <b>..._QR_Import_Codes_....csv</b> atau file CSV dari printer. Kode yang sudah ada dilewati otomatis, jadi aman diimpor ulang.</p>' +
           '<div class="toolbar"><input type="file" id="file" accept=".csv,text/csv" class="input" style="padding:6px"><button class="btn" id="imp">Import</button></div><div id="imp-msg" style="margin-top:10px"></div></section>' : "") +
         '<section class="card"><h2>Cek satu kode</h2><div class="toolbar"><input class="input mono" id="lc" placeholder="XXXXX-XXXXX-X"><button class="btn ghost" id="lk">Cek</button>' +
         (admin ? '<button class="btn danger" id="vd">Void kode ini</button>' : "") + '</div><div id="lk-out" style="margin-top:10px"></div></section>');
@@ -415,7 +479,8 @@
 
   // ------------------------------------------------------------- settings & export
   var SET_LABEL = { farmer_daily_cap: "Batas botol per petani per hari", retailer_monthly_cap: "Batas karton per retailer per bulan", retailer_hold_days: "Masa tunggu poin karton (hari)",
-    points_expiry_months: "Masa berlaku poin (bulan)", point_value_rp: "Nilai rupiah per poin", whatsapp_number: "Nomor WhatsApp NeoCare", program_open: "Program dibuka (true/false)" };
+    points_expiry_months: "Masa berlaku poin (bulan)", point_value_rp: "Nilai rupiah per poin", whatsapp_number: "Nomor WhatsApp NeoCare", program_open: "Program dibuka (true/false)",
+    program_name: "Nama program", app_url: "Alamat website", wa_notify: "Kirim pesan WhatsApp (true/false)", wa_provider: "Cara kirim WhatsApp (manual / fonnte)", wa_api_url: "Alamat API Fonnte" };
   function pSettings() {
     return rpc("admin_settings").then(function (s) {
       var admin = can(["admin"]);
@@ -425,12 +490,12 @@
           { t: "", f: function (k) { return admin ? '<button class="btn sm" data-save="' + esc(k) + '">Simpan</button>' : ""; } }
         ], Object.keys(s)) + "</section>" +
         '<div class="head"><h1>Ekspor data (CSV, bisa dibuka di Excel)</h1></div><section class="card"><div class="btns">' +
-        [["members", "Anggota"], ["ledger", "Riwayat poin"], ["redemptions", "Penukaran"], ["scans", "Semua scan"], ["reports", "Laporan palsu"]].map(function (x) { return '<button class="btn ghost" data-exp="' + x[0] + '">' + x[1] + "</button>"; }).join("") +
+        [["members", "Anggota"], ["ledger", "Riwayat poin"], ["redemptions", "Penukaran"], ["scans", "Semua scan"], ["reports", "Laporan palsu"], ["wa", "Pesan WhatsApp"]].map(function (x) { return '<button class="btn ghost" data-exp="' + x[0] + '">' + x[1] + "</button>"; }).join("") +
         '</div><p class="muted" style="margin-top:10px">Setiap ekspor dicatat di audit log. File berisi data pribadi: simpan dengan aman.</p></section>');
       $all("[data-save]").forEach(function (b) {
         b.onclick = function () {
           var k = b.getAttribute("data-save"), raw = $('[data-set="' + k + '"]').value.trim(), v;
-          if (k === "whatsapp_number") v = raw.replace(/\D/g, ""); else { try { v = JSON.parse(raw); } catch (e) { return toast("Nilai tidak valid"); } }
+          if (k === "whatsapp_number") v = raw.replace(/\D/g, ""); else { try { v = JSON.parse(raw); } catch (e) { v = raw; } }   // plain text is saved as text
           rpc("admin_save_setting", { p_key: k, p_value: v }).then(function () { toast("Tersimpan"); }).catch(function (e) { toast(e.message); });
         };
       });
@@ -440,7 +505,7 @@
 
   // ------------------------------------------------------------- login
   function login(msg) {
-    root.innerHTML = '<form class="login card" id="f"><div style="display:flex;gap:10px;align-items:center"><svg width="36" height="36" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#F2B544"/><path d="M10 22c2-7 6-11 12-12-1 6-5 10-12 12z" fill="#123D22"/></svg><div><b>Xemlohy Smart Rewards</b><div class="muted">Admin portal NCS</div></div></div>' +
+    root.innerHTML = '<form class="login card" id="f"><div style="display:flex;gap:10px;align-items:center"><svg width="36" height="36" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="#F2B544"/><path d="M10 22c2-7 6-11 12-12-1 6-5 10-12 12z" fill="#123D22"/></svg><div><b>NCS Program Rewards</b><div class="muted">Admin portal NCS</div></div></div>' +
       '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600">Email<input class="input" id="em" type="email" autocomplete="username"></label>' +
       '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600">Password<input class="input" id="pw" type="password" autocomplete="current-password"></label>' +
       (msg ? errBox(msg) : "") + '<div id="m"></div><button class="btn" type="submit">Masuk</button></form>';

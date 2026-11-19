@@ -1,12 +1,19 @@
 -- =====================================================================
--- Xemlohy Smart Rewards - database schema, security and server logic
+-- NCS Program Rewards - database schema, security and server logic
 -- PT Neo Crop Solutions
 --
--- Run this whole file once in Supabase: SQL Editor -> New query -> paste -> Run.
--- Safe to re-run: it drops and recreates the functions, never the data tables.
+-- Run this whole file in Supabase: SQL Editor -> New query -> paste -> Run.
+-- Safe to re-run (also to UPDATE an existing project): it adds missing
+-- tables/columns/settings and recreates the functions, never deletes data.
 -- =====================================================================
 
 create extension if not exists pgcrypto with schema extensions;
+-- pg_net lets the database call the WhatsApp gateway (Fonnte). Skipped where not available.
+do $$ begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_net') then
+    create extension if not exists pg_net with schema extensions;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- TABLES
@@ -177,6 +184,34 @@ create table if not exists public.audit_log (
   created_at timestamptz not null default now()
 );
 
+-- v2: columns added after the first release (no-op on a new install)
+alter table public.products add column if not exists description text;
+alter table public.members  add column if not exists bought_from_text text;   -- shop typed by the farmer
+
+-- WhatsApp messages to members (one row per message)
+create table if not exists public.wa_outbox (
+  id          bigint generated always as identity primary key,
+  member_id   uuid,
+  phone       text not null,
+  kind        text not null,
+  message     text not null,
+  data        jsonb,
+  status      text not null default 'new' check (status in ('hold','new','queued','manual','sent','failed','skipped')),
+  request_id  bigint,
+  response    text,
+  sent_by     uuid,
+  created_at  timestamptz not null default now(),
+  sent_at     timestamptz
+);
+create index if not exists wa_outbox_status_idx on public.wa_outbox (status, created_at);
+create index if not exists wa_outbox_member_idx on public.wa_outbox (member_id, created_at desc);
+
+-- Private values (WhatsApp gateway token). Never readable from the website.
+create table if not exists public.secrets (
+  key   text primary key,
+  value text
+);
+
 -- ---------------------------------------------------------------------
 -- ROW LEVEL SECURITY
 -- Everything is locked by default. Members read only their own rows;
@@ -194,6 +229,9 @@ alter table public.counterfeit_reports enable row level security;
 alter table public.flags               enable row level security;
 alter table public.staff               enable row level security;
 alter table public.audit_log           enable row level security;
+alter table public.wa_outbox           enable row level security;
+alter table public.secrets             enable row level security;
+revoke all on public.wa_outbox, public.secrets from anon, authenticated;
 
 drop policy if exists "products readable" on public.products;
 create policy "products readable" on public.products for select using (true);
@@ -203,7 +241,7 @@ create policy "active rewards readable" on public.rewards for select using (acti
 
 drop policy if exists "public settings readable" on public.settings;
 create policy "public settings readable" on public.settings for select
-  using (key in ('whatsapp_number','farmer_daily_cap','retailer_hold_days','points_expiry_months','program_open'));
+  using (key in ('whatsapp_number','farmer_daily_cap','retailer_hold_days','points_expiry_months','program_open','program_name','app_url'));
 
 drop policy if exists "own member row" on public.members;
 create policy "own member row" on public.members for select using (id = auth.uid());
@@ -214,7 +252,7 @@ create policy "own ledger" on public.point_ledger for select using (member_id = 
 drop policy if exists "own redemptions" on public.redemptions;
 create policy "own redemptions" on public.redemptions for select using (member_id = auth.uid());
 
--- qr_codes, scans, reports, flags, staff, audit_log: no direct access at all.
+-- qr_codes, scans, reports, flags, staff, audit_log, wa_outbox, secrets: no direct access at all.
 
 -- ---------------------------------------------------------------------
 -- HELPERS
@@ -298,9 +336,167 @@ returns jsonb language sql stable security definer set search_path = public as $
   select jsonb_build_object(
     'sku', sku, 'name', name, 'size_ml', size_ml, 'type', p_type,
     'points', case when p_type = 'carton' then retailer_points_per_carton else farmer_points end,
-    'bottles_per_carton', bottles_per_carton)
+    'bottles_per_carton', bottles_per_carton, 'description', description)
   from public.products where sku = p_sku
 $$;
+
+-- ---------------------------------------------------------------------
+-- WHATSAPP NOTIFICATIONS
+-- Every member event writes a message to wa_outbox.
+--   wa_provider = 'manual' : admin sends it from the "Pesan WA" page (wa.me button)
+--   wa_provider = 'fonnte' : sent automatically through the Fonnte gateway (pg_net)
+-- Point messages are combined: several scans within ~1 minute = one message.
+-- A WhatsApp problem never blocks the scan / redemption itself.
+-- ---------------------------------------------------------------------
+create or replace function public.setting_text(p_key text, p_default text)
+returns text language sql stable security definer set search_path = public as $$
+  select coalesce((select value #>> '{}' from public.settings where key = p_key), p_default)
+$$;
+
+create or replace function public.fmt_num(n numeric)
+returns text language sql immutable as $$
+  select replace(to_char(coalesce(n, 0), 'FM999,999,999,990'), ',', '.')
+$$;
+
+create or replace function public.pretty_code(c text)
+returns text language sql immutable as $$
+  select case when length(c) = 11 then substr(c, 1, 5) || '-' || substr(c, 6, 5) || '-' || substr(c, 11, 1) else c end
+$$;
+
+create or replace function public.local_phone(p text)
+returns text language sql immutable as $$
+  select case when p is null then null else '0' || substr(p, 3) end
+$$;
+
+create or replace function public.wa_head()
+returns text language sql stable security definer set search_path = public as $$
+  select '*' || public.setting_text('program_name', 'NCS Program Rewards') || '*' || chr(10)
+$$;
+
+create or replace function public.app_link(p_path text default '')
+returns text language sql stable security definer set search_path = public as $$
+  select rtrim(public.setting_text('app_url', 'https://rewards.neocare.id/'), '/') || '/' || coalesce(p_path, '')
+$$;
+
+create or replace function public.help_link()
+returns text language sql stable security definer set search_path = public as $$
+  select 'wa.me/' || public.setting_text('whatsapp_number', '6281517733335')
+$$;
+
+-- read the gateway's answers (pg_net keeps them 6 hours)
+create or replace function public.wa_sync()
+returns int language plpgsql volatile security definer set search_path = public as $$
+declare n int := 0;
+begin
+  if to_regclass('net._http_response') is null then return 0; end if;
+  update public.wa_outbox o set
+         status   = case when r.status_code between 200 and 299 and r.content ~* '"status"\s*:\s*true' then 'sent' else 'failed' end,
+         sent_at  = case when r.status_code between 200 and 299 and r.content ~* '"status"\s*:\s*true' then r.created else null end,
+         response = left(coalesce(r.error_msg, r.content, 'HTTP ' || r.status_code::text, 'timeout'), 500)
+    from net._http_response r
+   where o.status = 'queued' and o.request_id = r.id;
+  get diagnostics n = row_count;
+  update public.wa_outbox set status = 'failed', response = 'Tidak ada jawaban dari penyedia WA'
+   where status = 'queued' and created_at < now() - interval '6 hours';
+  return n;
+end $$;
+
+-- send one message: automatic (Fonnte) when configured, otherwise leave it for the admin
+create or replace function public.wa_dispatch(p_id bigint)
+returns text language plpgsql volatile security definer set search_path = public as $$
+declare o public.wa_outbox; tok text; rid bigint;
+begin
+  select * into o from public.wa_outbox where id = p_id for update;
+  if not found then return null; end if;
+  select value into tok from public.secrets where key = 'fonnte_token';
+  if public.setting_text('wa_provider', 'manual') = 'fonnte' and coalesce(tok, '') <> ''
+     and to_regprocedure('net.http_get(text,jsonb,jsonb,integer)') is not null then
+    rid := net.http_get(
+             public.setting_text('wa_api_url', 'https://api.fonnte.com/send/'),
+             jsonb_build_object('token', tok, 'target', o.phone, 'message', o.message, 'countryCode', '62'),
+             jsonb_build_object('Authorization', tok),
+             15000);
+    update public.wa_outbox set status = 'queued', request_id = rid, response = null, sent_at = null where id = p_id;
+    return 'queued';
+  end if;
+  update public.wa_outbox set status = 'manual' where id = p_id;
+  return 'manual';
+end $$;
+
+create or replace function public.wa_enqueue(p_member uuid, p_phone text, p_kind text, p_message text,
+                                             p_data jsonb default null, p_hold boolean default false)
+returns bigint language plpgsql volatile security definer set search_path = public as $$
+declare oid bigint;
+begin
+  if p_phone is null or p_phone !~ '^62[0-9]{8,13}$' then return null; end if;
+  insert into public.wa_outbox (member_id, phone, kind, message, data, status)
+  values (p_member, p_phone, p_kind, p_message, p_data, case when p_hold then 'hold' else 'new' end)
+  returning id into oid;
+  if not p_hold then perform public.wa_dispatch(oid); end if;
+  return oid;
+end $$;
+
+-- combine held point messages into one message per member (after ~45 s of no new scans)
+create or replace function public.wa_flush(p_force boolean default false)
+returns int language plpgsql volatile security definer set search_path = public as $$
+declare g record; b record; m public.members; items text; msg text; n int := 0;
+begin
+  if not pg_try_advisory_xact_lock(hashtext('ncs_wa_flush')) then return 0; end if;
+  for g in
+    select member_id, array_agg(id) ids, count(*) n_scans,
+           sum((data ->> 'points')::int) pts,
+           sum(case when (data ->> 'held')::boolean then (data ->> 'points')::int else 0 end) held_pts
+      from public.wa_outbox where status = 'hold'
+     group by member_id
+    having p_force or max(created_at) < now() - interval '45 seconds'
+  loop
+    select * into m from public.members where id = g.member_id;
+    if not found then delete from public.wa_outbox where id = any(g.ids); continue; end if;
+    select * into b from public.member_balance(g.member_id);
+    select string_agg(cnt || 'x ' || prod, ', ' order by prod) into items
+      from (select data ->> 'product' prod, count(*) cnt from public.wa_outbox where id = any(g.ids) group by 1) s;
+    msg := public.wa_head() ||
+      'Halo ' || coalesce(case when m.type = 'retailer' then m.shop_name end, m.name) || ', poin Anda bertambah ✅' || chr(10) || chr(10) ||
+      '+' || public.fmt_num(g.pts) || ' poin dari ' || g.n_scans || case when m.type = 'retailer' then ' karton' else ' botol' end ||
+      ' (' || coalesce(items, '-') || ')' || chr(10) ||
+      case when g.held_pts > 0 then public.fmt_num(g.held_pts) || ' poin di antaranya masih tertahan (masa tunggu / pemeriksaan).' || chr(10) else '' end ||
+      chr(10) || 'Total poin bisa dipakai: *' || public.fmt_num(b.available) || ' poin*' ||
+      case when b.pending > 0 then chr(10) || 'Poin tertahan: ' || public.fmt_num(b.pending) || ' poin' else '' end ||
+      chr(10) || chr(10) || 'Tukar poin dengan hadiah di ' || public.app_link('');
+    delete from public.wa_outbox where id = any(g.ids);
+    perform public.wa_enqueue(g.member_id, m.phone, 'points', msg, jsonb_build_object('scans', g.n_scans, 'points', g.pts));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+create or replace function public.wa_housekeeping()
+returns void language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.wa_sync();
+  perform public.wa_flush(false);
+end $$;
+
+-- called by the event functions below; never raises
+create or replace function public.wa_notify(p_member uuid, p_kind text, p_message text,
+                                            p_data jsonb default null, p_hold boolean default false)
+returns void language plpgsql volatile security definer set search_path = public as $$
+begin
+  if coalesce((select value from public.settings where key = 'wa_notify'), 'true'::jsonb) = 'false'::jsonb then return; end if;
+  perform public.wa_housekeeping();
+  perform public.wa_enqueue(p_member, (select phone from public.members where id = p_member), p_kind,
+                            case when p_hold then p_message else public.wa_head() || p_message end, p_data, p_hold);
+exception when others then
+  raise warning 'wa_notify % gagal: %', p_kind, sqlerrm;
+end $$;
+
+-- run every minute by pg_cron (if enabled) so the last point message of a scan session goes out
+create or replace function public.wa_cron()
+returns void language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.wa_sync();
+  perform public.wa_flush(false);
+end $$;
 
 -- ---------------------------------------------------------------------
 -- PUBLIC: check a code (no login needed)
@@ -370,15 +566,30 @@ begin
   if coalesce((p ->> 'consent')::boolean, false) is not true then raise exception 'Persetujuan wajib dicentang'; end if;
 
   insert into public.members (id, type, phone, name, province, regency, district, crop, land_ha,
-                              shop_name, owner_name, address, distributor, lat, lng, bought_from, status)
+                              shop_name, owner_name, address, distributor, lat, lng, bought_from, bought_from_text, status)
   values (uid, t, ph, trim(p ->> 'name'), nullif(trim(p ->> 'province'), ''), nullif(trim(p ->> 'regency'), ''),
           nullif(trim(p ->> 'district'), ''), nullif(trim(p ->> 'crop'), ''),
           nullif(p ->> 'land_ha', '')::numeric,
           nullif(trim(p ->> 'shop_name'), ''), nullif(trim(p ->> 'owner_name'), ''), nullif(trim(p ->> 'address'), ''),
           nullif(trim(p ->> 'distributor'), ''),
           nullif(p ->> 'lat', '')::numeric, nullif(p ->> 'lng', '')::numeric,
-          (select id from public.members where id = nullif(p ->> 'bought_from', '')::uuid and type = 'retailer' and status = 'active'),
+          (select id from public.members where id = case when coalesce(p ->> 'bought_from', '') ~ '^[0-9a-f-]{36}$'
+                                                          then (p ->> 'bought_from')::uuid end and type = 'retailer' and status = 'active'),
+          left(nullif(trim(p ->> 'bought_from_text'), ''), 200),
           case when t = 'retailer' then 'pending' else 'active' end);
+
+  if t = 'farmer' then
+    perform public.wa_notify(uid, 'welcome',
+      'Halo ' || trim(p ->> 'name') || ', selamat bergabung! 🎉' || chr(10) || chr(10) ||
+      'Scan kode QR pada setiap botol produk NCS untuk mengumpulkan poin, lalu tukar poin dengan hadiah.' || chr(10) ||
+      'Info poin dan penukaran akan kami kirim lewat WhatsApp ini.' || chr(10) || chr(10) ||
+      'Cek poin & hadiah: ' || public.app_link(''));
+  else
+    perform public.wa_notify(uid, 'welcome',
+      'Halo ' || trim(p ->> 'name') || ', pendaftaran toko *' || coalesce(trim(p ->> 'shop_name'), '') || '* sudah kami terima.' || chr(10) || chr(10) ||
+      'Tim NCS akan memverifikasi toko Anda. Karton yang di-scan sebelum verifikasi tetap dicatat dan poinnya diproses setelah toko terverifikasi.' || chr(10) || chr(10) ||
+      public.app_link(''));
+  end if;
   return jsonb_build_object('result', 'ok', 'status', case when t = 'retailer' then 'pending' else 'active' end);
 end $$;
 
@@ -523,6 +734,10 @@ begin
   insert into public.scans (code, member_id, action, result, ip, user_agent, lat, lng)
   values (c, uid, 'claim', 'credited', v_ip, public.client_ua(), p_lat, p_lng);
 
+  perform public.wa_notify(uid, 'points', '+' || pts || ' poin ' || public.pretty_code(c),
+    jsonb_build_object('points', pts, 'product', (prod ->> 'name') || ' ' || (prod ->> 'size_ml') || ' ml',
+                       'held', st <> 'available', 'code', c), true);
+
   select * into b from public.member_balance(uid);
   return jsonb_build_object('result','credited', 'code', c, 'product', prod, 'points', pts,
                             'point_status', st, 'available_at', avail_at, 'note', v_note,
@@ -555,7 +770,7 @@ begin
 
   if r.kind = 'pulsa' then
     p_delivery := 'pulsa';
-    p_pulsa_phone := coalesce(nullif(regexp_replace(coalesce(p_pulsa_phone,''), '[^0-9]', '', 'g'), ''), m.phone);
+    p_pulsa_phone := m.phone;   -- pulsa always goes to the registered number (login is by phone number only)
   elsif coalesce(p_delivery, '') not in ('address','pickup') or coalesce(trim(p_address), '') = '' then
     return jsonb_build_object('result','address_required');
   end if;
@@ -570,6 +785,17 @@ begin
   if r.stock is not null then update public.rewards set stock = stock - 1 where id = r.id; end if;
 
   select * into b from public.member_balance(uid);
+  perform public.wa_notify(uid, 'redeem_requested',
+    'Permintaan tukar poin Anda sudah kami terima ✅' || chr(10) || chr(10) ||
+    'No. penukaran: *R' || rid || '*' || chr(10) ||
+    'Hadiah: ' || r.name || chr(10) ||
+    'Poin dipakai: ' || public.fmt_num(r.points) || chr(10) ||
+    case p_delivery when 'pulsa' then 'Pulsa dikirim ke: ' || public.local_phone(p_pulsa_phone)
+                    when 'pickup' then 'Diambil di: ' || trim(p_address)
+                    else 'Dikirim ke: ' || trim(p_address) end || chr(10) ||
+    'Sisa poin: ' || public.fmt_num(b.available) || chr(10) || chr(10) ||
+    'Status: *menunggu konfirmasi admin NCS* (maks. 3 hari kerja). Kabar berikutnya kami kirim lewat WhatsApp ini.' || chr(10) ||
+    'Cek status: ' || public.app_link('riwayat'));
   return jsonb_build_object('result','ok', 'redemption_id', rid, 'available', b.available);
 end $$;
 
@@ -589,6 +815,11 @@ begin
   insert into public.counterfeit_reports (code_entered, shop_name, location, notes, lat, lng, photo_path, member_id, ip)
   values (left(public.norm_code(p_code), 20), left(p_shop, 200), left(p_location, 300), left(p_notes, 1000),
           p_lat, p_lng, left(p_photo_path, 300), auth.uid(), v_ip);
+  if exists (select 1 from public.members where id = auth.uid()) then
+    perform public.wa_notify(auth.uid(), 'report',
+      'Terima kasih, laporan produk mencurigakan dari Anda sudah kami terima.' || chr(10) ||
+      'Tim Neo Crop Solutions akan memeriksanya. Jika perlu info tambahan, kami hubungi lewat nomor ini.');
+  end if;
   return jsonb_build_object('result','ok');
 end $$;
 
@@ -630,6 +861,7 @@ begin
     'fake_signals_7d',    (select count(*) from scans where result='not_found' and created_at > now() - interval '7 days')
                           + (select count(*) from counterfeit_reports where created_at > now() - interval '7 days'),
     'reports_new',        (select count(*) from counterfeit_reports where status='new'),
+    'wa_todo',            (select count(*) from wa_outbox where status in ('manual','failed','new')),
     'codes', (select coalesce(jsonb_object_agg(status, n), '{}'::jsonb) from (select status, count(*) n from qr_codes group by status) s),
     'by_week', (select coalesce(jsonb_agg(w order by w.week), '[]'::jsonb) from (
         select to_char(date_trunc('week', l.created_at at time zone tz), 'YYYY-MM-DD') week,
@@ -680,7 +912,7 @@ end $$;
 
 create or replace function public.admin_set_redemption(p_id bigint, p_status text, p_tracking text default null, p_note text default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
-declare r public.redemptions;
+declare r public.redemptions; b record; msg text;
 begin
   perform public.require_staff(array['admin']);
   select * into r from redemptions where id = p_id for update;
@@ -697,6 +929,33 @@ begin
    where id = p_id;
   perform public.log_audit('redemption_' || p_status, 'redemption', p_id::text,
                            jsonb_build_object('from', r.status, 'tracking', p_tracking, 'note', p_note));
+
+  select * into b from member_balance(r.member_id);
+  msg := case p_status
+    when 'approved' then
+      'Penukaran *R' || r.id || '* (' || r.reward_name || ') sudah *disetujui* admin ✅' || chr(10) ||
+      case when r.delivery = 'pulsa' then 'Pulsa sedang kami proses ke nomor ' || public.local_phone(r.pulsa_phone) || '.'
+           when r.delivery = 'pickup' then 'Hadiah sedang disiapkan untuk diambil di: ' || coalesce(r.address, '-') || '.'
+           else 'Hadiah sedang disiapkan untuk dikirim.' end ||
+      coalesce(chr(10) || 'Catatan admin: ' || nullif(trim(p_note), ''), '')
+    when 'shipped' then
+      'Hadiah ' || r.reward_name || ' (penukaran *R' || r.id || '*) sudah *dikirim* 🚚' ||
+      coalesce(chr(10) || 'Kurir / no. resi: ' || nullif(trim(p_tracking), ''), '') ||
+      coalesce(chr(10) || 'Catatan admin: ' || nullif(trim(p_note), ''), '')
+    when 'completed' then
+      'Penukaran *R' || r.id || '* (' || r.reward_name || ') sudah *selesai* ✅' || chr(10) ||
+      case when r.delivery = 'pulsa' then 'Pulsa sudah dikirim ke nomor ' || public.local_phone(r.pulsa_phone) || '.' || chr(10) else '' end ||
+      'Terima kasih sudah ikut program ini.' || chr(10) || chr(10) ||
+      'Total poin bisa dipakai: *' || public.fmt_num(b.available) || ' poin*' || chr(10) ||
+      'Kumpulkan terus poin: ' || public.app_link('')
+    when 'rejected' then
+      'Mohon maaf, penukaran *R' || r.id || '* (' || r.reward_name || ') *tidak dapat diproses*.' ||
+      coalesce(chr(10) || 'Alasan: ' || nullif(trim(p_note), ''), '') || chr(10) ||
+      public.fmt_num(r.points) || ' poin sudah dikembalikan ke akun Anda.' || chr(10) || chr(10) ||
+      'Total poin bisa dipakai: *' || public.fmt_num(b.available) || ' poin*' || chr(10) ||
+      'Pertanyaan? Hubungi NeoCare: ' || public.help_link()
+  end;
+  perform public.wa_notify(r.member_id, 'redeem_' || p_status, msg);
   return jsonb_build_object('result','ok');
 end $$;
 
@@ -709,6 +968,7 @@ begin
   return coalesce((select jsonb_agg(x order by x.created_at desc) from (
     select m.id, m.type, m.phone, m.name, m.province, m.regency, m.district, m.crop, m.land_ha, m.shop_name,
            m.owner_name, m.address, m.distributor, m.lat, m.lng, m.status, m.status_note, m.created_at, m.verified_at,
+           coalesce(m.bought_from_text, (select r.shop_name from members r where r.id = m.bought_from)) bought_from_text,
            (select available from member_balance(m.id)) available,
            (select pending from member_balance(m.id)) pending,
            (select count(*) from point_ledger l where l.member_id = m.id and l.kind = 'scan' and l.status <> 'rejected') scans
@@ -740,6 +1000,19 @@ begin
   end if;
   perform public.log_audit(case when p_approve then 'retailer_verified' else 'retailer_rejected' end,
                            'member', p_member::text, jsonb_build_object('note', p_note, 'released_entries', released));
+  if p_approve then
+    perform public.wa_notify(p_member, 'retailer_verified',
+      'Selamat, toko *' || coalesce(m.shop_name, m.name) || '* sudah *terverifikasi* ✅' || chr(10) || chr(10) ||
+      'Scan kode QR pada setiap karton produk NCS yang Anda terima. Poin karton bisa dipakai setelah masa tunggu ' ||
+      public.setting_num('retailer_hold_days', 14)::int || ' hari.' ||
+      case when released > 0 then chr(10) || released || ' karton yang sudah di-scan sebelumnya ikut diproses.' else '' end ||
+      chr(10) || chr(10) || 'Cek poin: ' || public.app_link(''));
+  else
+    perform public.wa_notify(p_member, 'retailer_rejected',
+      'Mohon maaf, pendaftaran toko *' || coalesce(m.shop_name, m.name) || '* belum dapat disetujui.' ||
+      coalesce(chr(10) || 'Catatan: ' || nullif(trim(p_note), ''), '') || chr(10) ||
+      'Hubungi NeoCare untuk info lebih lanjut: ' || public.help_link());
+  end if;
   return jsonb_build_object('result','ok', 'released', released);
 end $$;
 
@@ -752,20 +1025,18 @@ begin
   select status into old from members where id = p_member;
   update members set status = p_status, status_note = p_note where id = p_member;
   perform public.log_audit('member_' || p_status, 'member', p_member::text, jsonb_build_object('from', old, 'note', p_note));
+  if old is distinct from p_status then
+    perform public.wa_notify(p_member, 'member_' || p_status,
+      case when p_status = 'blocked'
+           then 'Akun Anda untuk sementara *dibekukan*.' || coalesce(chr(10) || 'Alasan: ' || nullif(trim(p_note), ''), '') || chr(10) ||
+                'Hubungi NeoCare untuk bantuan: ' || public.help_link()
+           else 'Akun Anda sudah *aktif* kembali ✅' || chr(10) || 'Silakan lanjut scan dan tukar poin: ' || public.app_link('') end);
+  end if;
   return jsonb_build_object('result','ok');
 end $$;
 
-create or replace function public.admin_reset_pin(p_member uuid, p_pin text)
-returns jsonb language plpgsql volatile security definer set search_path = public, extensions as $$
-begin
-  perform public.require_staff(array['admin']);
-  if p_pin !~ '^[0-9]{6}$' then raise exception 'PIN harus 6 angka'; end if;
-  update auth.users set encrypted_password = extensions.crypt(p_pin, extensions.gen_salt('bf')), updated_at = now()
-   where id = p_member;
-  if not found then raise exception 'Akun tidak ditemukan'; end if;
-  perform public.log_audit('pin_reset', 'member', p_member::text, null);
-  return jsonb_build_object('result','ok');
-end $$;
+-- v2: login is by phone number only, so there is no PIN to reset
+drop function if exists public.admin_reset_pin(uuid, text);
 
 create or replace function public.admin_adjust_points(p_member uuid, p_delta int, p_note text)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
@@ -776,6 +1047,11 @@ begin
   insert into point_ledger (member_id, delta, kind, status, note, created_by)
   values (p_member, p_delta, 'adjust', 'available', p_note, auth.uid());
   perform public.log_audit('points_adjusted', 'member', p_member::text, jsonb_build_object('delta', p_delta, 'note', p_note));
+  perform public.wa_notify(p_member, 'points_adjusted',
+    'Poin Anda disesuaikan oleh admin NCS: *' || case when p_delta > 0 then '+' else '' end || public.fmt_num(p_delta) || ' poin*' || chr(10) ||
+    'Keterangan: ' || trim(p_note) || chr(10) || chr(10) ||
+    'Total poin bisa dipakai: *' || public.fmt_num((select available from member_balance(p_member))) || ' poin*' || chr(10) ||
+    public.app_link(''));
   return jsonb_build_object('result','ok');
 end $$;
 
@@ -826,6 +1102,17 @@ begin
     update point_ledger set status = 'rejected', note = 'Ditolak admin' where id = p_entry;
   end if;
   perform public.log_audit(case when p_approve then 'points_approved' else 'points_rejected' end, 'ledger', p_entry::text, null);
+  perform public.wa_notify(l.member_id, case when p_approve then 'review_approved' else 'review_rejected' end,
+    case when p_approve and m.type = 'retailer' then
+           'Poin tertahan *+' || public.fmt_num(l.delta) || '* dari kode ' || public.pretty_code(l.ref) || ' sudah *disetujui* ✅' || chr(10) ||
+           'Poin bisa dipakai mulai ' || to_char((select available_at from point_ledger where id = p_entry) at time zone 'Asia/Jakarta', 'DD-MM-YYYY') || ' (masa tunggu karton).'
+         when p_approve then
+           'Poin tertahan *+' || public.fmt_num(l.delta) || '* dari kode ' || public.pretty_code(l.ref) || ' sudah *disetujui* ✅'
+         else
+           'Poin ' || public.fmt_num(l.delta) || ' dari kode ' || public.pretty_code(l.ref) || ' *tidak disetujui* setelah pemeriksaan tim NCS.' || chr(10) ||
+           'Pertanyaan? Hubungi NeoCare: ' || public.help_link() end ||
+    chr(10) || chr(10) || 'Total poin bisa dipakai: *' || public.fmt_num((select available from member_balance(l.member_id))) || ' poin*' || chr(10) ||
+    public.app_link(''));
   return jsonb_build_object('result','ok');
 end $$;
 
@@ -1002,7 +1289,9 @@ begin
   if p_what = 'members' then
     return coalesce((select jsonb_agg(x) from (
       select m.type, m.phone, m.name, m.province, m.regency, m.district, m.crop, m.land_ha, m.shop_name, m.owner_name,
-             m.address, m.distributor, m.status, m.created_at,
+             m.address, m.distributor,
+             coalesce(m.bought_from_text, (select r.shop_name from members r where r.id = m.bought_from)) beli_di_toko,
+             m.status, m.created_at,
              (select available from member_balance(m.id)) points_available,
              (select pending from member_balance(m.id)) points_pending
       from members m order by m.created_at) x), '[]'::jsonb);
@@ -1019,11 +1308,82 @@ begin
     return coalesce((select jsonb_agg(x) from (
       select s.created_at, s.code, s.action, s.result, m.phone, m.name, s.ip, s.lat, s.lng
       from scans s left join members m on m.id = s.member_id order by s.created_at desc limit 100000) x), '[]'::jsonb);
+  elsif p_what = 'wa' then
+    return coalesce((select jsonb_agg(x) from (
+      select o.created_at, o.phone, m.name, o.kind, o.status, o.sent_at, o.message, o.response
+      from wa_outbox o left join members m on m.id = o.member_id where o.status <> 'hold' order by o.created_at limit 100000) x), '[]'::jsonb);
   elsif p_what = 'reports' then
     return coalesce((select jsonb_agg(x) from (
       select created_at, code_entered, shop_name, location, notes, lat, lng, status from counterfeit_reports order by created_at) x), '[]'::jsonb);
   end if;
   raise exception 'Jenis ekspor tidak dikenal';
+end $$;
+
+-- ---- WhatsApp messages (admin) -----------------------------------------
+create or replace function public.admin_wa_outbox(p_status text default 'todo')
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.require_staff(array['admin','viewer']);
+  perform public.wa_sync();
+  perform public.wa_flush(false);
+  return jsonb_build_object(
+    'provider',  public.setting_text('wa_provider', 'manual'),
+    'notify',    coalesce((select value from settings where key = 'wa_notify'), 'true'::jsonb),
+    'token_set', exists (select 1 from secrets where key = 'fonnte_token' and coalesce(value, '') <> ''),
+    'net_ready', to_regprocedure('net.http_get(text,jsonb,jsonb,integer)') is not null,
+    'counts',    (select coalesce(jsonb_object_agg(status, n), '{}'::jsonb) from (select status, count(*) n from wa_outbox group by status) s),
+    'rows', coalesce((select jsonb_agg(x order by x.created_at desc) from (
+        select o.id, o.created_at, o.sent_at, o.phone, o.kind, o.message, o.status, o.response,
+               m.name, m.shop_name, m.type member_type
+          from wa_outbox o left join members m on m.id = o.member_id
+         where o.status <> 'hold'
+           and (p_status = 'all' or (p_status = 'todo' and o.status in ('manual','failed','new')) or o.status = p_status)
+         order by o.created_at desc limit 300) x), '[]'::jsonb));
+end $$;
+
+create or replace function public.admin_wa_mark(p_ids bigint[], p_status text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare n int;
+begin
+  perform public.require_staff(array['admin']);
+  if p_status not in ('sent','skipped') then raise exception 'Status tidak valid'; end if;
+  update wa_outbox set status = p_status, sent_by = auth.uid(), sent_at = case when p_status = 'sent' then now() end
+   where id = any(p_ids) and status in ('manual','failed','new');
+  get diagnostics n = row_count;
+  return jsonb_build_object('result','ok', 'count', n);
+end $$;
+
+create or replace function public.admin_wa_resend(p_id bigint)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.require_staff(array['admin']);
+  return jsonb_build_object('result', public.wa_dispatch(p_id));
+end $$;
+
+create or replace function public.admin_wa_set_token(p_token text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+begin
+  perform public.require_staff(array['admin']);
+  if coalesce(trim(p_token), '') = '' then
+    delete from secrets where key = 'fonnte_token';
+  else
+    insert into secrets (key, value) values ('fonnte_token', trim(p_token))
+    on conflict (key) do update set value = excluded.value;
+  end if;
+  perform public.log_audit('wa_token_' || case when coalesce(trim(p_token), '') = '' then 'removed' else 'set' end, 'secret', 'fonnte_token', null);
+  return jsonb_build_object('result','ok');
+end $$;
+
+create or replace function public.admin_wa_test(p_phone text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g'); oid bigint;
+begin
+  perform public.require_staff(array['admin']);
+  if ph like '0%' then ph := '62' || substr(ph, 2); end if;
+  if ph !~ '^62[0-9]{8,13}$' then raise exception 'Nomor tidak valid'; end if;
+  oid := public.wa_enqueue(null, ph, 'test', public.wa_head() ||
+           'Tes notifikasi WhatsApp dari sistem. Jika pesan ini masuk, pengaturan WhatsApp sudah benar ✅');
+  return jsonb_build_object('result', (select status from wa_outbox where id = oid), 'id', oid);
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -1049,7 +1409,6 @@ grant execute on function public.admin_members(text,text,text)             to au
 grant execute on function public.admin_member_detail(uuid)                 to authenticated;
 grant execute on function public.admin_verify_retailer(uuid,boolean,text)  to authenticated;
 grant execute on function public.admin_set_member_status(uuid,text,text)   to authenticated;
-grant execute on function public.admin_reset_pin(uuid,text)                to authenticated;
 grant execute on function public.admin_adjust_points(uuid,int,text)        to authenticated;
 grant execute on function public.admin_review_list()                       to authenticated;
 grant execute on function public.admin_review_decide(bigint,boolean)       to authenticated;
@@ -1067,7 +1426,34 @@ grant execute on function public.admin_set_flag(bigint,text)               to au
 grant execute on function public.admin_settings()                          to authenticated;
 grant execute on function public.admin_save_setting(text,jsonb)            to authenticated;
 grant execute on function public.admin_export(text)                        to authenticated;
+grant execute on function public.admin_wa_outbox(text)                     to authenticated;
+grant execute on function public.admin_wa_mark(bigint[],text)              to authenticated;
+grant execute on function public.admin_wa_resend(bigint)                   to authenticated;
+grant execute on function public.admin_wa_set_token(text)                  to authenticated;
+grant execute on function public.admin_wa_test(text)                       to authenticated;
 
 -- table-level read access used by the policies above
 grant select on public.products, public.rewards, public.settings to anon, authenticated;
 grant select on public.members, public.point_ledger, public.redemptions to authenticated;
+
+-- ---------------------------------------------------------------------
+-- v2 SETTINGS (added only if missing; change them in the admin portal)
+-- ---------------------------------------------------------------------
+insert into public.settings (key, value, note) values
+  ('program_name', '"NCS Program Rewards"',          'Nama program di pesan WhatsApp'),
+  ('app_url',      '"https://rewards.neocare.id/"',  'Alamat website program (dipakai di pesan WhatsApp)'),
+  ('wa_notify',    'true',                           'true = kirim pesan WhatsApp ke anggota setiap ada poin / penukaran / perubahan status'),
+  ('wa_provider',  '"manual"',                       'manual = admin kirim dari menu Pesan WA; fonnte = otomatis lewat Fonnte'),
+  ('wa_api_url',   '"https://api.fonnte.com/send/"', 'Alamat API Fonnte (biarkan apa adanya)')
+on conflict (key) do nothing;
+update public.products set description = 'Anti rontok bunga & buah' where sku like 'XEM-%' and description is null;
+
+-- Every minute: send combined point messages (needs pg_cron; skipped if not available).
+do $$ begin
+  if exists (select 1 from pg_available_extensions where name = 'pg_cron') then
+    create extension if not exists pg_cron;
+    perform cron.schedule('ncs-wa-flush', '* * * * *', 'select public.wa_cron()');
+  end if;
+exception when others then
+  raise notice 'pg_cron tidak aktif (%). Pesan poin tetap terkirim saat ada aktivitas berikutnya.', sqlerrm;
+end $$;

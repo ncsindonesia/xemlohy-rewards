@@ -1,4 +1,4 @@
-/* Xemlohy Smart Rewards - member app (farmers and retailers)
+/* NCS Program Rewards - member app (farmers and retailers)
    PT Neo Crop Solutions. Plain JavaScript, no build step.
    Talks to Supabase (see /supabase/*.sql); runs in DEMO mode when config.js has no Supabase URL. */
 (function () {
@@ -32,8 +32,9 @@
   }
   function phoneOk(p) { return /^628[0-9]{7,12}$/.test(p); }
   function showPhone(p) { return p ? "0" + p.slice(2) : ""; }
-  function pinOk(p) { return /^[0-9]{6}$/.test(p); }
-  function pinWeak(p) { return /^(\d)\1{5}$/.test(p) || "0123456789".indexOf(p) >= 0 || "9876543210".indexOf(p) >= 0; }
+  // Login is by phone number only (no PIN). Supabase still needs a password, so it is derived from the number.
+  // The SQL file 04_update_v2.sql uses the same rule for accounts created before v2.
+  function pw(phone) { return "NCS-" + phone + "-rewards"; }
   function normCode(v) { return String(v || "").toUpperCase().replace(/[^0-9A-Z]/g, ""); }
   function codeOk(c) {
     if (!c || c.length !== 11) return false;
@@ -60,7 +61,7 @@
     var t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); t.textContent = msg;
     document.body.appendChild(t); setTimeout(function () { t.remove(); }, ms || 2600);
   }
-  function waLink(text) { return "https://wa.me/" + (CFG.WHATSAPP || "") + "?text=" + encodeURIComponent(text || "Halo NeoCare, saya butuh bantuan program Xemlohy Smart Rewards."); }
+  function waLink(text) { return "https://wa.me/" + (CFG.WHATSAPP || "") + "?text=" + encodeURIComponent(text || "Halo NeoCare, saya butuh bantuan NCS Program Rewards."); }
   function geo(timeout) {
     return new Promise(function (resolve) {
       if (!navigator.geolocation) return resolve(null);
@@ -86,7 +87,7 @@
     shield: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
     warn: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg>',
     wa: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-13.5 7.8L3 21l1.3-4.4A9 9 0 1 1 21 12z"/></svg>',
-    bottle: '<svg width="40" height="72" viewBox="0 0 44 80" role="img" aria-label="Botol Xemlohy"><rect x="15" y="2" width="14" height="10" rx="2" fill="#123D22"/><path d="M12 14h20l4 10v50a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4V24z" fill="#1F6B3A"/><rect x="11" y="36" width="22" height="24" rx="3" fill="#F2B544"/></svg>',
+    bottle: '<svg width="40" height="72" viewBox="0 0 44 80" role="img" aria-label="Botol produk"><rect x="15" y="2" width="14" height="10" rx="2" fill="#123D22"/><path d="M12 14h20l4 10v50a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4V24z" fill="#1F6B3A"/><rect x="11" y="36" width="22" height="24" rx="3" fill="#F2B544"/></svg>',
     box: '<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#1F6B3A" stroke-width="1.6" stroke-linejoin="round" role="img" aria-label="Karton"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>',
     pulsa: '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#1F6B3A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>',
     goods: '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#1F6B3A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12v9H4v-9M2 7h20v5H2zM12 21V7M12 7c-2-4-6-4-6-1s6 1 6 1zm0 0c2-4 6-4 6-1s-6 1-6 1z"/></svg>'
@@ -97,7 +98,7 @@
   function emailOf(phone) { return phone + "@" + (CFG.MEMBER_EMAIL_DOMAIN || "member.neocare.id"); }
   function authErr(e) {
     var m = (e && e.message) || String(e);
-    if (/invalid login credentials/i.test(m)) return new Error("Nomor HP atau PIN salah.");
+    if (/invalid login credentials/i.test(m)) return new Error("Nomor HP belum bisa masuk. Hubungi NeoCare.");
     if (/already registered|already been registered|user_already_exists/i.test(m)) return new Error("Nomor ini sudah terdaftar. Silakan masuk.");
     if (/rate limit|too many/i.test(m)) return new Error("Terlalu banyak percobaan. Tunggu beberapa menit lalu coba lagi.");
     if (/email.*(invalid|not authorized)/i.test(m)) return new Error("Pendaftaran ditolak server (pengaturan email). Hubungi NeoCare.");
@@ -110,11 +111,20 @@
       return Promise.resolve();
     },
     session: function () { return sb.auth.getSession().then(function (r) { return r.data.session; }); },
-    signIn: function (phone, pin) { return sb.auth.signInWithPassword({ email: emailOf(phone), password: pin }).then(function (r) { if (r.error) throw authErr(r.error); }); },
-    signUp: function (phone, pin) {
-      return sb.auth.signUp({ email: emailOf(phone), password: pin }).then(function (r) {
-        if (r.error) throw authErr(r.error);
-        if (!r.data.session) throw new Error("Akun dibuat tetapi belum aktif. Admin perlu mematikan 'Confirm email' di Supabase.");
+    // one step: log in with the phone number; if the number is new, create the account
+    enter: function (phone) {
+      return sb.auth.signInWithPassword({ email: emailOf(phone), password: pw(phone) }).then(function (r) {
+        if (!r.error) return { created: false };
+        if (!/invalid login credentials/i.test(r.error.message || "")) throw authErr(r.error);
+        return sb.auth.signUp({ email: emailOf(phone), password: pw(phone) }).then(function (r2) {
+          if (r2.error) {
+            if (/already registered|already been registered|user_already_exists|already exists/i.test(r2.error.message || "") || r2.error.code === "user_already_exists")
+              throw new Error("Nomor ini sudah terdaftar tetapi belum bisa masuk tanpa PIN. Hubungi NeoCare lewat WhatsApp untuk mengaktifkannya.");
+            throw authErr(r2.error);
+          }
+          if (!r2.data.session) throw new Error("Akun dibuat tetapi belum aktif. Admin perlu mematikan 'Confirm email' di Supabase.");
+          return { created: true };
+        });
       });
     },
     signOut: function () { return sb.auth.signOut(); },
@@ -143,11 +153,6 @@
         return self.rpc("submit_report", { p_code: d.code || "", p_shop: d.shop || "", p_location: d.location || "", p_notes: d.notes || "",
           p_lat: d.lat || null, p_lng: d.lng || null, p_photo_path: path });
       });
-    },
-    changePin: function (phone, oldPin, newPin) {
-      return this.signIn(phone, oldPin).then(function () {
-        return sb.auth.updateUser({ password: newPin }).then(function (r) { if (r.error) throw authErr(r.error); });
-      }, function () { throw new Error("PIN lama salah."); });
     }
   };
 
@@ -166,7 +171,7 @@
     }
     function product(c, type) {
       var size = ALPHA.indexOf(c.charAt(0)) % 2 ? 250 : 100;
-      return { sku: "XEM-" + size, name: "Xemlohy", size_ml: size, type: type, points: type === "carton" ? 24 : (size === 250 ? 25 : 10), bottles_per_carton: 24 };
+      return { sku: "XEM-" + size, name: "Xemlohy", size_ml: size, type: type, points: type === "carton" ? 24 : (size === 250 ? 25 : 10), bottles_per_carton: 24, description: "Anti rontok bunga & buah" };
     }
     var REWARDS = [
       { id: 1, catalog: "farmer", name: "Pulsa", description: "Pulsa dikirim ke nomor HP Anda", points: 250, kind: "pulsa", stock: null },
@@ -178,8 +183,7 @@
     return {
       init: function () { return Promise.resolve(); },
       session: function () { var d = db(); return Promise.resolve(d.me ? { user: { id: d.me, email: d.me + "@demo" } } : null); },
-      signIn: function (phone, pin) { var d = db(); var u = d.users[phone]; if (!u || u.pin !== pin) return Promise.reject(new Error("Nomor HP atau PIN salah.")); d.me = phone; save(d); return wait(); },
-      signUp: function (phone, pin) { var d = db(); if (d.users[phone]) return Promise.reject(new Error("Nomor ini sudah terdaftar. Silakan masuk.")); d.users[phone] = { pin: pin, member: null, ledger: [], redemptions: [] }; d.me = phone; save(d); return wait(); },
+      enter: function (phone) { var d = db(), created = !d.users[phone]; if (created) d.users[phone] = { member: null, ledger: [], redemptions: [] }; d.me = phone; save(d); return wait({ created: created }); },
       signOut: function () { var d = db(); d.me = null; save(d); return wait(); },
       checkCode: function (c, type) {
         c = normCode(c); if (!codeOk(c)) return wait({ result: "typo" });
@@ -197,7 +201,7 @@
         var p = product(c, t), st = "available", at = null, note = null;
         if (u.member.type === "retailer") { if (u.member.status === "pending") { st = "review"; note = "Menunggu verifikasi toko"; } else { st = "pending"; at = new Date(Date.now() + 14 * 864e5).toISOString(); } }
         d.used[c] = { phone: d.me, at: new Date().toISOString(), type: t };
-        u.ledger.unshift({ created_at: new Date().toISOString(), delta: p.points, kind: "scan", status: st, available_at: at, ref: c, note: note, product: "Xemlohy " + p.size_ml + " ml" });
+        u.ledger.unshift({ created_at: new Date().toISOString(), delta: p.points, kind: "scan", status: st, available_at: at, ref: c, note: note, product: p.name + " " + p.size_ml + " ml" });
         save(d); var b = bal(u);
         return wait({ result: "credited", code: c, product: p, points: p.points, point_status: st, available_at: at, note: note, available: b.available, pending: b.pending });
       },
@@ -228,8 +232,7 @@
         save(d); return wait({ result: "ok", redemption_id: rid, available: bal(u).available });
       },
       retailers: function () { return wait([{ id: "demo-toko", shop_name: "Toko Tani Makmur (demo)", regency: "Garut" }]); },
-      report: function () { return wait({ result: "ok" }); },
-      changePin: function (phone, oldPin, newPin) { var d = db(), u = d.users[phone]; if (!u || u.pin !== oldPin) return Promise.reject(new Error("PIN lama salah.")); u.pin = newPin; save(d); return wait(); }
+      report: function () { return wait({ result: "ok" }); }
     };
   })();
 
@@ -252,7 +255,7 @@
     opts = opts || {};
     var left = opts.back
       ? '<a class="back" href="' + esc(opts.back) + '" data-link aria-label="Kembali">' + IC.back + "</a><h1>" + esc(opts.title || "") + "</h1>"
-      : '<a class="brand" href="' + (isMember() ? "/akun" : "/") + '" data-link>' + IC.logo + "<div><b>Xemlohy Smart Rewards</b><span>by Neo Crop Solutions</span></div></a>";
+      : '<a class="brand" href="' + (isMember() ? "/akun" : "/") + '" data-link>' + IC.logo + "<div><b>NCS Program Rewards</b><span>by Neo Crop Solutions</span></div></a>";
     var right = isMember() && !opts.back ? '<a class="icon-btn" href="/profil" data-link aria-label="Profil">' + IC.user + "</a>" : "";
     return (DEMO ? '<div class="demo-banner">MODE DEMO - data hanya tersimpan di HP ini</div>' : "") + '<header class="top">' + left + right + "</header>";
   }
@@ -313,14 +316,14 @@
     if (isMember()) return go("/akun", true);
     if (S.session && S.summary && S.summary.result === "no_profile") return go("/daftar", true);
     page({ footer: true },
-      '<section class="hero"><h2>Scan botol Xemlohy, kumpulkan poin, tukar hadiah</h2>' +
-      "<p>Setiap botol Xemlohy punya kode QR unik untuk cek keaslian produk dan mengumpulkan poin.</p>" +
+      '<section class="hero"><h2>Scan QR produk NCS, kumpulkan poin, tukar hadiah</h2>' +
+      "<p>Setiap botol produk Neo Crop Solutions punya kode QR unik untuk cek keaslian produk dan mengumpulkan poin.</p>" +
       '<div class="stack"><a class="btn gold" href="/cek" data-link>' + IC.scan + " Scan / cek kode</a></div></section>" +
       '<section class="card"><h2>Cara ikut program</h2><ol class="steps">' +
-      '<li><div class="num-dot">1</div><div><b>Scan</b><div class="muted">Scan kode QR pada label botol Xemlohy dengan kamera HP. Tidak perlu install aplikasi.</div></div></li>' +
-      '<li><div class="num-dot">2</div><div><b>Dapat poin</b><div class="muted">Masuk dengan nomor HP dan PIN, kumpulkan poin, tukar dengan hadiah.</div></div></li></ol></section>' +
+      '<li><div class="num-dot">1</div><div><b>Scan</b><div class="muted">Scan kode QR pada label botol dengan kamera HP. Tidak perlu install aplikasi.</div></div></li>' +
+      '<li><div class="num-dot">2</div><div><b>Dapat poin</b><div class="muted">Masuk cukup dengan nomor HP/WhatsApp, kumpulkan poin, tukar dengan hadiah. Info poin dikirim lewat WhatsApp.</div></div></li></ol></section>' +
       '<section class="card"><div class="row between"><h2>Hadiah</h2><a href="/hadiah" data-link class="small">Lihat semua</a></div><div id="rw-prev" class="rewards"><div class="spinner"></div></div></section>' +
-      '<section class="stack"><a class="btn" href="/masuk" data-link>Masuk</a><a class="btn ghost" href="/daftar" data-link>Daftar anggota baru</a></section>' +
+      '<section class="stack"><a class="btn" href="/masuk" data-link>Masuk / Daftar dengan nomor HP</a></section>' +
       '<section class="card flat"><h3>Butuh bantuan?</h3><p class="muted">Hubungi tim NeoCare lewat WhatsApp.</p>' +
       '<a class="btn ghost" href="' + waLink() + '" rel="noopener">' + IC.wa + " Chat WhatsApp NeoCare</a>" +
       '<p class="small center" style="margin-top:12px"><a href="/lapor" data-link>Laporkan produk mencurigakan</a></p></section>');
@@ -334,7 +337,7 @@
     if (!p) return "";
     var isCarton = p.type === "carton";
     return '<div class="product"><div class="bottle">' + (isCarton ? IC.box : IC.bottle) + '</div><div><div style="font-size:20px;font-weight:800">' +
-      esc(p.name) + " " + esc(p.size_ml) + " ml" + (isCarton ? " (karton)" : "") + '</div><div class="muted">Anti rontok bunga &amp; buah' +
+      esc(p.name) + " " + esc(p.size_ml) + " ml" + (isCarton ? " (karton)" : "") + '</div><div class="muted">' + esc(p.description || "Produk Neo Crop Solutions") +
       (isCarton ? " · isi " + esc(p.bottles_per_carton) + " botol" : "") + '</div><div class="muted small">Kode ' + esc(prettyCode(code)) + "</div></div></div>";
   }
 
@@ -397,8 +400,8 @@
         pendingCode({ code: code, type: type });
         html += '<section class="card"><span class="pill ok">' + IC.shield + " Produk Asli Terverifikasi</span>" +
           '<div class="ptsbox" style="margin-top:12px"><span>Nilai ' + (type === "carton" ? "karton" : "botol") + " ini</span><b>+" + num(r.product.points) + " poin</b></div>" +
-          '<p class="muted" style="margin-top:12px">Masuk atau daftar untuk mengklaim poin. Kode ini disimpan dan otomatis diklaim setelah Anda masuk.</p>' +
-          '<div class="stack"><a class="btn" href="/masuk" data-link>Masuk &amp; klaim poin</a><a class="btn ghost" href="/daftar" data-link>Daftar anggota baru</a></div></section>';
+          '<p class="muted" style="margin-top:12px">Masuk cukup dengan nomor HP untuk mengklaim poin. Kode ini disimpan dan otomatis diklaim setelah Anda masuk.</p>' +
+          '<div class="stack"><a class="btn" href="/masuk" data-link>Masuk / daftar &amp; klaim poin</a></div></section>';
       } else html += statusCard(Object.assign({ code: code }, r));
       page({ back: "/", title: "Hasil scan" }, html);
     }).catch(function (e) { page({ back: "/", title: "Hasil scan" }, errorBox(e.message) + '<a class="btn" href="' + location.pathname + '" data-link>Coba lagi</a>'); });
@@ -484,10 +487,6 @@
     return '<div class="field"><label class="lbl" for="' + id + '">Nomor HP (WhatsApp)</label><div class="phone-wrap"><span>+62</span><input id="' + id +
       '" type="tel" inputmode="numeric" autocomplete="tel" placeholder="812 3456 7890" value="' + esc(val || "") + '"></div></div>';
   }
-  function pinField(id, label, auto) {
-    return '<div class="field"><label class="lbl" for="' + id + '">' + esc(label) + '</label><input id="' + id + '" class="input pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="' +
-      (auto || "current-password") + '" placeholder="••••••"></div>';
-  }
   function afterAuth() {
     return refreshMe().then(function () {
       if (!isMember()) return go("/daftar", true);
@@ -496,54 +495,42 @@
       go("/akun", true);
     });
   }
-  function viewLogin() {
+  // one screen for log in and sign up: phone number only
+  function viewEnter(title) {
     if (isMember()) return go("/akun", true);
     var p = pendingCode();
-    page({ back: "/", title: "Masuk", noNav: true },
+    page({ back: "/", title: title, noNav: true },
       (p ? '<div class="ok-msg">Kode ' + esc(prettyCode(p.code)) + " akan diklaim setelah Anda masuk.</div>" : "") +
-      '<form id="f" class="card stack" novalidate><h2>Masuk ke akun Anda</h2>' + phoneField("ph") + pinField("pin", "PIN (6 angka)") +
-      '<div id="msg"></div><button class="btn" type="submit">Masuk</button>' +
-      '<p class="small center">Lupa PIN? <a href="' + waLink("Halo NeoCare, saya lupa PIN akun Xemlohy Smart Rewards.") + '" rel="noopener">Hubungi NeoCare</a></p></form>' +
-      '<p class="center muted">Belum punya akun? <a href="/daftar" data-link>Daftar di sini</a></p>');
+      '<form id="f" class="card stack" novalidate><h2>Masuk / daftar</h2><p class="muted">Cukup masukkan nomor HP (WhatsApp). Belum terdaftar? Akun dibuat otomatis.</p>' +
+      phoneField("ph") +
+      '<p class="small muted">Pastikan nomornya benar dan aktif di WhatsApp: info poin dan penukaran hadiah dikirim ke nomor ini.</p>' +
+      '<div id="msg"></div><button class="btn" type="submit">Lanjut</button></form>' +
+      '<p class="center small"><a href="' + waLink() + '" rel="noopener">Butuh bantuan? Chat NeoCare</a></p>');
     $("#f").addEventListener("submit", function (e) {
       e.preventDefault();
-      var phone = normPhone($("#ph").value), pin = $("#pin").value, btn = this.querySelector("button");
+      var phone = normPhone($("#ph").value), btn = this.querySelector("button");
       if (!phoneOk(phone)) return ($("#msg").innerHTML = errorBox("Nomor HP tidak valid. Contoh: 0812 3456 7890"));
-      if (!pinOk(pin)) return ($("#msg").innerHTML = errorBox("PIN harus 6 angka."));
       btn.disabled = true; btn.textContent = "Memproses...";
-      API.signIn(phone, pin).then(afterAuth).catch(function (err) { btn.disabled = false; btn.textContent = "Masuk"; $("#msg").innerHTML = errorBox(err.message); });
+      memo.regPhone = phone;
+      API.enter(phone).then(afterAuth).catch(function (err) {
+        btn.disabled = false; btn.textContent = "Lanjut";
+        $("#msg").innerHTML = errorBox(err.message) + (/NeoCare/.test(err.message) ? '<a class="btn ghost" style="margin-top:8px" href="' + waLink("Halo NeoCare, nomor saya " + showPhone(phone) + " belum bisa masuk NCS Program Rewards.") + '" rel="noopener">' + IC.wa + " Chat NeoCare</a>" : "");
+      });
     });
   }
-
+  function viewLogin() { viewEnter("Masuk"); }
   function viewRegister() {
     if (isMember()) return go("/akun", true);
     if (S.session && S.summary && S.summary.result === "no_profile") return registerProfile();
-    page({ back: "/", title: "Daftar", noNav: true },
-      '<form id="f" class="card stack" novalidate><h2>Daftar anggota</h2><p class="muted">Langkah 1 dari 2: buat akun dengan nomor HP dan PIN.</p>' +
-      phoneField("ph") + pinField("pin", "Buat PIN (6 angka)", "new-password") + pinField("pin2", "Ulangi PIN", "new-password") +
-      '<p class="small muted">PIN dipakai setiap kali masuk. Jangan beri tahu PIN kepada siapa pun, termasuk petugas.</p>' +
-      '<div id="msg"></div><button class="btn" type="submit">Lanjut</button></form>' +
-      '<p class="center muted">Sudah punya akun? <a href="/masuk" data-link>Masuk</a></p>');
-    $("#f").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var phone = normPhone($("#ph").value), pin = $("#pin").value, pin2 = $("#pin2").value, btn = this.querySelector("button");
-      var msg = !phoneOk(phone) ? "Nomor HP tidak valid. Contoh: 0812 3456 7890" : !pinOk(pin) ? "PIN harus 6 angka." :
-        pinWeak(pin) ? "PIN terlalu mudah ditebak. Hindari 123456 atau angka yang sama semua." : pin !== pin2 ? "Ulangi PIN tidak sama." : "";
-      if (msg) return ($("#msg").innerHTML = errorBox(msg));
-      btn.disabled = true; btn.textContent = "Memproses...";
-      memo.regPhone = phone;
-      API.signUp(phone, pin).then(function () { return refreshMe(); }).then(registerProfile).catch(function (err) {
-        btn.disabled = false; btn.textContent = "Lanjut";
-        $("#msg").innerHTML = errorBox(err.message) + (/terdaftar/.test(err.message) ? '<a class="btn ghost" style="margin-top:8px" href="/masuk" data-link>Masuk</a>' : "");
-      });
-    });
+    viewEnter("Daftar");
   }
 
   function registerProfile() {
     var type = memo.regType || "farmer", crop = "", loc = null;
     function draw() {
       page({ title: "Daftar", back: null, noNav: true },
-        '<form id="f" class="stack" novalidate><section class="card stack"><h2>Langkah 2 dari 2: data anggota</h2>' +
+        '<form id="f" class="stack" novalidate><section class="card stack"><h2>Lengkapi data anggota</h2>' +
+        '<p class="small muted">Nomor HP: <b>' + esc(showPhone(myPhone())) + '</b> · <a href="#" id="chg-ph">Ganti nomor</a></p>' +
         '<div class="seg" role="group" aria-label="Jenis anggota"><button type="button" data-type="farmer" aria-pressed="' + (type === "farmer") + '">Petani<small>Scan botol</small></button>' +
         '<button type="button" data-type="retailer" aria-pressed="' + (type === "retailer") + '">Retailer / Toko<small>Scan karton</small></button></div>' +
         (type === "farmer"
@@ -551,27 +538,20 @@
             '<div class="field"><span class="lbl">Tanaman utama</span><div class="chips" role="group" aria-label="Tanaman utama">' +
             CROPS.map(function (c) { return '<button type="button" class="chip" data-crop="' + esc(c) + '" aria-pressed="' + (crop === c) + '">' + esc(c) + "</button>"; }).join("") + "</div></div>" +
             field("land", "Luas lahan (hektar)", true, "decimal") +
-            '<div class="field"><label class="lbl" for="toko">Beli Xemlohy di toko mana? <span class="opt">(opsional)</span></label><select id="toko" class="input"><option value="">Tidak tahu / lewati</option></select></div>'
+            '<div class="field"><label class="lbl" for="toko">Beli produk NCS di toko mana? <span class="opt">(opsional)</span></label><input id="toko" class="input" maxlength="200" autocomplete="off" placeholder="Contoh: Toko Tani Makmur, Pasar Garut"></div>'
           : field("owner", "Nama pemilik") + field("shop", "Nama toko") + field("address", "Alamat toko") + provinceField() + field("regency", "Kabupaten / Kota") +
             field("district", "Kecamatan", true) + field("distributor", "Beli dari distributor") +
             '<div class="field"><span class="lbl">Lokasi toko <span class="opt">(disarankan)</span></span><button type="button" class="btn ghost" id="gps">Ambil lokasi toko sekarang</button><div id="gps-msg" class="small muted"></div></div>' +
             '<div class="ok-msg">Akun toko diverifikasi oleh tim NCS terlebih dahulu. Karton yang di-scan sebelum verifikasi tetap dicatat.</div>') +
-        '<label class="check"><input type="checkbox" id="consent"><span>Saya berusia 17 tahun ke atas dan menyetujui <a href="' + waLink("Halo NeoCare, saya ingin membaca Syarat Program dan Kebijakan Privasi Xemlohy Smart Rewards.") + '" rel="noopener">Syarat Program &amp; Kebijakan Privasi</a>. Data saya dipakai NCS untuk program ini.</span></label>' +
+        '<label class="check"><input type="checkbox" id="consent"><span>Saya berusia 17 tahun ke atas dan menyetujui <a href="' + waLink("Halo NeoCare, saya ingin membaca Syarat Program dan Kebijakan Privasi NCS Program Rewards.") + '" rel="noopener">Syarat Program &amp; Kebijakan Privasi</a>. Data saya dipakai NCS untuk program ini.</span></label>' +
         '<div id="msg"></div><button class="btn" type="submit">Simpan &amp; selesai</button></section></form>');
       $all("[data-type]").forEach(function (b) { b.addEventListener("click", function () { save(); type = memo.regType = b.getAttribute("data-type"); draw(); }); });
       $all("[data-crop]").forEach(function (b) { b.addEventListener("click", function () { crop = b.getAttribute("data-crop"); $all("[data-crop]").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); }); });
       restore();
-      var reg = $("#regency");
-      if (type === "farmer" && reg) {
-        var loadShops = function () {
-          API.retailers(reg.value).then(function (list) {
-            var sel = $("#toko"); if (!sel) return; var cur = sel.value;
-            sel.innerHTML = '<option value="">Tidak tahu / lewati</option>' + list.map(function (r) { return '<option value="' + esc(r.id) + '">' + esc(r.shop_name + (r.regency ? " - " + r.regency : "")) + "</option>"; }).join("");
-            sel.value = cur;
-          }).catch(function () {});
-        };
-        reg.addEventListener("change", loadShops); loadShops();
-      }
+      $("#chg-ph").addEventListener("click", function (e) {
+        e.preventDefault();
+        API.signOut().then(function () { S.session = null; S.summary = null; memo.regPhone = null; go("/masuk", true); });
+      });
       var gps = $("#gps");
       if (gps) gps.addEventListener("click", function () {
         $("#gps-msg").textContent = "Mencari lokasi...";
@@ -591,14 +571,14 @@
     function save() { $all("#f input.input, #f select").forEach(function (el) { keep[el.id] = el.value; }); }
     function restore() { Object.keys(keep).forEach(function (k) { var el = document.getElementById(k); if (el) el.value = keep[k]; }); }
     function val(id) { var el = document.getElementById(id); return el ? el.value.trim() : ""; }
+    function myPhone() { return S.session && S.session.user && S.session.user.email ? S.session.user.email.split("@")[0] : (memo.regPhone || ""); }
     function submit(e) {
       e.preventDefault();
       var btn = $("#f button[type=submit]");
-      var phone = S.session && S.session.user && S.session.user.email ? S.session.user.email.split("@")[0] : (memo.regPhone || "");
-      var p = { type: type, phone: phone, province: val("prov"), regency: val("regency"), district: val("district"), consent: $("#consent").checked };
+      var p = { type: type, phone: myPhone(), province: val("prov"), regency: val("regency"), district: val("district"), consent: $("#consent").checked };
       var need;
       if (type === "farmer") {
-        p.name = val("name"); p.crop = crop; p.land_ha = val("land").replace(",", "."); p.bought_from = val("toko");
+        p.name = val("name"); p.crop = crop; p.land_ha = val("land").replace(",", "."); p.bought_from_text = val("toko");
         need = !p.name ? "Nama wajib diisi." : !p.province ? "Pilih provinsi." : !p.regency ? "Kabupaten/Kota wajib diisi." : "";
       } else {
         p.owner_name = val("owner"); p.name = p.owner_name; p.shop_name = val("shop"); p.address = val("address"); p.distributor = val("distributor");
@@ -617,7 +597,7 @@
 
   // ---- dashboard
   function ledgerRow(l) {
-    var label = l.kind === "scan" ? "Scan " + (l.product || "Xemlohy") : l.kind === "redeem" ? (l.note || "Tukar hadiah") :
+    var label = l.kind === "scan" ? "Scan " + (l.product || "produk") : l.kind === "redeem" ? (l.note || "Tukar hadiah") :
       l.kind === "refund" ? "Poin dikembalikan" : l.kind === "adjust" ? (l.note || "Penyesuaian poin") : l.kind;
     var held = l.status === "review" || (l.status === "pending" && new Date(l.available_at) > new Date());
     var sub = dt(l.created_at, true) + (l.status === "rejected" ? " · ditolak" : l.status === "review" ? " · diperiksa" : held ? " · aktif " + dt(l.available_at) : "");
@@ -642,7 +622,7 @@
         : '<b class="small">' + (s.affordable ? "Semua hadiah bisa ditukar" : "Katalog hadiah") + "</b>") +
       (s.affordable ? '<p class="small" style="margin:8px 0 0;color:#1F6B3A;font-weight:700">' + num(s.affordable) + " hadiah sudah bisa ditukar ›</p>" : "") + "</a>" +
       '<div class="row between"><h3 style="margin:0">Aktivitas terakhir</h3><a class="small" href="/riwayat" data-link>Lihat semua</a></div>' +
-      (s.recent && s.recent.length ? '<ul class="list">' + s.recent.map(ledgerRow).join("") + "</ul>" : '<div class="card empty">Belum ada aktivitas. Scan ' + (m.type === "retailer" ? "karton" : "botol") + " Xemlohy pertama Anda.</div>"));
+      (s.recent && s.recent.length ? '<ul class="list">' + s.recent.map(ledgerRow).join("") + "</ul>" : '<div class="card empty">Belum ada aktivitas. Scan ' + (m.type === "retailer" ? "karton" : "botol") + " produk NCS pertama Anda.</div>"));
   }
 
   // ---- rewards
@@ -663,14 +643,14 @@
           (S.summary.member.status !== "active" ? '<span class="pill warn">Akun belum aktif</span>' : "") + "</section>" : '<div class="ok-msg">Masuk untuk menukar poin dengan hadiah.</div>') +
         (items.length ? '<div class="rewards">' + items.map(function (r) { return rewardCard(r, member && S.summary.member.status === "active", false, avail); }).join("") + "</div>"
           : '<div class="card empty">Katalog hadiah ' + (cat === "retailer" ? "Mitra Retailer" : "") + " segera diumumkan tim NCS.</div>") +
-        '<section class="card flat"><h3>Cara penukaran</h3><p class="muted small">Pulsa dikirim ke nomor HP Anda. Barang dikirim ke alamat atau diambil di toko pilihan. Permintaan diproses maksimal 3 hari kerja; statusnya bisa dilihat di Riwayat.</p></section>');
+        '<section class="card flat"><h3>Cara penukaran</h3><p class="muted small">Pulsa dikirim ke nomor HP terdaftar. Barang dikirim ke alamat atau diambil di toko pilihan. Permintaan diproses maksimal 3 hari kerja; setiap perubahan status dikirim lewat WhatsApp dan bisa dilihat di Riwayat.</p></section>');
       $all("[data-redeem]").forEach(function (b) { b.addEventListener("click", function () { redeemSheet(items.filter(function (r) { return String(r.id) === b.getAttribute("data-redeem"); })[0]); }); });
     }).catch(function (e) { page({ active: "/hadiah", title: "Hadiah" }, errorBox(e.message)); });
   }
   function redeemSheet(r) {
     var pulsa = r.kind === "pulsa", m = S.summary.member;
     var sh = sheet('<h2>Tukar ' + esc(r.name) + "</h2><p class=\"muted\">" + num(r.points) + " poin akan dipotong dari saldo Anda (" + num(S.summary.available) + " poin).</p>" +
-      (pulsa ? '<div class="field"><label class="lbl" for="rp">Kirim pulsa ke nomor</label><div class="phone-wrap"><span>+62</span><input id="rp" type="tel" inputmode="numeric" value="' + esc(showPhone(m.phone).slice(1)) + '"></div></div>'
+      (pulsa ? '<div class="ok-msg">Pulsa dikirim ke nomor terdaftar Anda: <b>' + esc(showPhone(m.phone)) + "</b></div>"
         : '<div class="seg" role="group" aria-label="Cara terima"><button type="button" data-d="address" aria-pressed="true">Kirim ke alamat</button><button type="button" data-d="pickup" aria-pressed="false">Ambil di toko</button></div>' +
           '<div class="field"><label class="lbl" for="ra" id="ra-l">Alamat lengkap pengiriman</label><textarea id="ra" class="input" placeholder="Nama jalan, desa, kecamatan, kabupaten"></textarea></div>') +
       '<div class="field"><label class="lbl" for="rn">Catatan <span class="opt">(opsional)</span></label><input id="rn" class="input"></div>' +
@@ -684,8 +664,7 @@
     });
     $("#rcancel", sh).addEventListener("click", function () { sh.remove(); });
     $("#rgo", sh).addEventListener("click", function () {
-      var btn = this, phone = pulsa ? normPhone($("#rp", sh).value) : null, addr = pulsa ? null : $("#ra", sh).value.trim();
-      if (pulsa && !phoneOk(phone)) return ($("#rmsg", sh).innerHTML = errorBox("Nomor HP tidak valid."));
+      var btn = this, phone = null, addr = pulsa ? null : $("#ra", sh).value.trim();
       if (!pulsa && !addr) return ($("#rmsg", sh).innerHTML = errorBox(delivery === "pickup" ? "Isi nama toko tempat mengambil." : "Isi alamat pengiriman."));
       btn.disabled = true; btn.textContent = "Memproses...";
       API.redeem(r.id, delivery, phone, addr, $("#rn", sh).value).then(function (res) {
@@ -697,7 +676,7 @@
         refreshMe().then(function () {
           page({ active: "/hadiah", title: "Penukaran terkirim", back: "/hadiah" },
             '<section class="success"><div class="tick">' + IC.check + "</div><h2 style=\"color:#fff\">Permintaan terkirim</h2><p>" + esc(r.name) + " · " + num(r.points) + " poin</p>" +
-            "<p>Tim NCS memproses maksimal 3 hari kerja. Kabar status ada di menu Riwayat.</p></section>" +
+            "<p>Menunggu konfirmasi admin NCS (maks. 3 hari kerja). Kabar status dikirim lewat WhatsApp dan bisa dilihat di menu Riwayat.</p></section>" +
             '<section class="card row between"><span class="muted">Sisa poin</span><b style="font-size:24px">' + num(res.available) + "</b></section>" +
             '<a class="btn ghost" href="/riwayat" data-link>Lihat riwayat penukaran</a>');
         });
@@ -735,21 +714,11 @@
       '<ul class="list">' + row("Nama", m.name) + row("Nama toko", m.shop_name) + row("Nomor HP", showPhone(m.phone)) + row("Jenis anggota", m.type === "retailer" ? "Mitra Retailer" : "Petani") +
       row("Status", { active: "Aktif", pending: "Menunggu verifikasi", blocked: "Dibekukan", rejected: "Ditolak" }[m.status]) + row("Wilayah", [m.regency, m.province].filter(Boolean).join(", ")) +
       row("Tanaman utama", m.crop) + row("Anggota sejak", dt(m.created_at)) + "</ul>" +
-      '<div class="stack"><button class="btn ghost" id="chg">Ganti PIN</button><a class="btn ghost" href="' + waLink() + '" rel="noopener">' + IC.wa + ' Bantuan WhatsApp NeoCare</a>' +
+      '<p class="small muted">Info poin dan penukaran dikirim ke WhatsApp ' + esc(showPhone(m.phone)) + ".</p>" +
+      '<div class="stack"><a class="btn ghost" href="' + waLink() + '" rel="noopener">' + IC.wa + ' Bantuan WhatsApp NeoCare</a>' +
       '<a class="btn ghost" href="/lapor" data-link>Laporkan produk mencurigakan</a><button class="btn danger" id="out">Keluar</button></div>' +
       '<p class="small muted center">Untuk mengubah data profil, hubungi NeoCare.</p>');
     $("#out").addEventListener("click", function () { API.signOut().then(function () { S.session = null; S.summary = null; go("/", true); }); });
-    $("#chg").addEventListener("click", function () {
-      var sh = sheet("<h2>Ganti PIN</h2>" + pinField("p0", "PIN lama") + pinField("p1", "PIN baru", "new-password") + pinField("p2", "Ulangi PIN baru", "new-password") +
-        '<div id="pm"></div><button class="btn" id="pgo" type="button">Simpan PIN baru</button>');
-      $("#pgo", sh).addEventListener("click", function () {
-        var a = $("#p0", sh).value, b = $("#p1", sh).value, c = $("#p2", sh).value, btn = this;
-        var msg = !pinOk(a) || !pinOk(b) ? "PIN harus 6 angka." : pinWeak(b) ? "PIN baru terlalu mudah ditebak." : b !== c ? "Ulangi PIN tidak sama." : "";
-        if (msg) return ($("#pm", sh).innerHTML = errorBox(msg));
-        btn.disabled = true;
-        API.changePin(m.phone, a, b).then(function () { sh.remove(); toast("PIN berhasil diganti"); }).catch(function (e) { btn.disabled = false; $("#pm", sh).innerHTML = errorBox(e.message); });
-      });
-    });
   }
 
   // ---- counterfeit report

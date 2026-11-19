@@ -1,4 +1,4 @@
-/* Xemlohy Smart Rewards - NCS admin portal */
+/* NCS Program Rewards - NCS admin portal */
 :root { --green:#123D22; --green2:#1F6B3A; --tint:#E6F0E3; --gold:#F2B544; --goldtint:#FFF4DC; --ink:#17211B; --muted:#4B5A50;
         --line:#D5DDD3; --bg:#F3F5F0; --red:#A3261B; --redtint:#FBE9E7; --amber:#7A4F00; }
 * { box-sizing: border-box; }
@@ -67,3 +67,7 @@ textarea.input { padding: 8px 10px; min-height: 70px; width: 100%; }
 .spinner { width: 32px; height: 32px; border: 4px solid var(--tint); border-top-color: var(--green2); border-radius: 50%; animation: spin .8s linear infinite; margin: 30px auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+.wa-msg { white-space: pre-line; font-size: 12.5px; line-height: 1.45; max-width: 420px; max-height: 180px; overflow: auto; }
+.wa-link { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 6px; background: #25D366; color: #fff !important; font-size: 11px; font-weight: 700; text-decoration: none; }
+.toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }

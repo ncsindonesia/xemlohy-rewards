@@ -1,7 +1,14 @@
-# Xemlohy Smart Rewards – web app
+# NCS Program Rewards – web app (version 2)
 
-Mobile web app for the Xemlohy loyalty program of PT Neo Crop Solutions (NCS), live at
+Mobile web app for the loyalty program of PT Neo Crop Solutions (NCS), live at
 `https://rewards.neocare.id`.
+
+**New in version 2:** members log in with their phone number only (no PIN) · the farmer
+types the shop where they bought the product · WhatsApp message to the member for every
+event (points, redemption, status changes) · program renamed **NCS Program Rewards**.
+
+> **Already running version 1?** Go to [Update from version 1](#update-from-version-1) –
+> you do not need to repeat the full setup.
 
 | Part | Address | Who uses it |
 | --- | --- | --- |
@@ -25,6 +32,7 @@ security checks live in **Supabase** (a hosted PostgreSQL database).
 | `supabase/01_schema.sql` | Database tables, security rules and all server logic. |
 | `supabase/02_seed.sql` | Starting settings, the 3 Xemlohy products and the 4 farmer rewards. |
 | `supabase/03_storage.sql` | Private photo storage for counterfeit reports. |
+| `supabase/04_update_v2.sql` | Only for a project that already runs version 1 (see below). |
 | `vendor/` | Supabase client 2.45.4 and QR scanner 2.3.8 (bundled, no outside CDN needed). |
 | `manifest.webmanifest`, `icons/` | Lets members add the app to their home screen. |
 | `CNAME` | Tells GitHub Pages to serve `rewards.neocare.id`. Keep it. |
@@ -46,8 +54,8 @@ works, but data stays on that one phone. Useful for showing the flow.
 
 ### 2. Login settings
 1. **Authentication → Sign In / Providers → Email**: keep Email enabled, **turn OFF
-   "Confirm email"**, save. (Members log in with phone + 6-digit PIN; the app stores each
-   account as `<phone>@member.neocare.id`. No email is ever sent.)
+   "Confirm email"**, save. (Members log in with their phone number only; the app stores
+   each account as `<phone>@member.neocare.id`. No email is ever sent.)
 2. **Authentication → URL Configuration**: Site URL = `https://rewards.neocare.id`.
 
 ### 3. Create the database
@@ -92,11 +100,45 @@ drag in everything from this folder (replacing the holding page's `index.html` a
 3. Codes start as **belum aktif**: a scan shows "produk asli, poin belum aktif".
    Click **Aktifkan** for a batch when those goods leave the NCS warehouse.
 
-### 8. Test before the pilot
+### 8. WhatsApp messages (choose one)
+Every event creates a WhatsApp message for the member: welcome, points earned (several
+scans within about 1 minute are combined into one message with the new total and the link
+`https://rewards.neocare.id/`), redemption received / approved / shipped / completed /
+rejected, shop verified, held points approved or rejected, admin point adjustments,
+account frozen / re-activated, counterfeit report received.
+
+**Option A – Manual (free, works immediately).** The messages appear in the admin menu
+**Pesan WA**. Click **Buka WhatsApp** (WhatsApp opens with the number and the text filled
+in), press send, then click **Terkirim**. Good for the pilot.
+
+**Option B – Automatic through Fonnte** (Indonesian WhatsApp gateway, paid monthly plan –
+check prices at fonnte.com).
+1. Register at <https://fonnte.com>, add a device and scan its QR code with the WhatsApp
+   number that will send the messages. Use a **separate number**, not the main NeoCare
+   number: gateways like Fonnte use normal WhatsApp, and WhatsApp may block a number that
+   sends a lot of automatic messages.
+2. In Fonnte, copy the device **token**.
+3. Admin portal → **Pesan WA** → paste the token → **Simpan** → set **Cara kirim** to
+   **Otomatis (Fonnte)** → type your own number → **Kirim pesan tes**. After about
+   1 minute choose **Semua** in the filter: the test message should show **Terkirim**.
+   **Gagal** shows Fonnte's reason (e.g. "token invalid").
+4. The token is stored in a private table: the website can save it, but nobody can read it
+   back.
+
+Requirements (normally already true on Supabase): the **pg_net** extension (sends the
+messages) and **pg_cron** (sends the last combined point message within a minute).
+`01_schema.sql` switches both on. If pg_cron is not available, the combined point message
+goes out with the next activity or when an admin opens **Pesan WA**. Check under
+**Database → Extensions** if needed.
+
+To stop all messages: **Pesan WA** → untick **Kirim pesan WhatsApp ke anggota**.
+
+### 9. Test before the pilot
 Scan the test sheet with 3–5 phones. Register a test farmer and a test retailer, claim
 codes, redeem, approve in the admin portal. Then remove the test accounts (SQL Editor):
 ```sql
 -- replace the phone numbers with your test numbers (format 62...)
+delete from public.wa_outbox    where phone in ('6281234567890');
 delete from public.point_ledger where member_id in (select id from public.members where phone in ('6281234567890'));
 delete from public.redemptions  where member_id in (select id from public.members where phone in ('6281234567890'));
 update public.members set bought_from = null where bought_from in (select id from public.members where phone in ('6281234567890'));
@@ -108,19 +150,35 @@ delete from auth.users where email in ('6281234567890@member.neocare.id');
 
 ---
 
+## Update from version 1
+For the project that is already live (all members, points and codes are kept):
+1. Supabase **SQL Editor → New query**: paste the **new** `supabase/01_schema.sql` → **Run**.
+   It adds the new tables, columns and settings and replaces the functions.
+2. New query: paste `supabase/04_update_v2.sql` → **Run** (once). Members who registered
+   with a PIN can now log in with their phone number only. The result shows how many
+   accounts were updated.
+3. GitHub: upload the new website files (`index.html`, `404.html`, `app.js`, `styles.css`,
+   `manifest.webmanifest`, `admin/` folder) and replace the old ones. **Do not replace
+   `config.js`** – yours already has the Supabase keys.
+4. Open the site on a phone and pull down to refresh (or clear the browser cache) so the
+   new version loads. Then set up WhatsApp (step 8 above).
+
+---
+
 ## Daily work in the admin portal
 
 | Menu | What to do |
 | --- | --- |
 | Dashboard | Farmers, scans, repeat rate, sell-in vs sell-out, points liability, counterfeit signals. |
-| Penukaran | Pulsa: send through your pulsa provider, then **Selesai**. Goods: **Setujui → Kirim** (courier + receipt no.) **→ Selesai**. **Tolak** returns the points automatically. Target: within 3 working days. |
+| Pesan WA | Messages to members. Manual mode: **Buka WhatsApp** → send → **Terkirim**. Automatic mode: only failed messages need attention (**Kirim ulang otomatis**). |
+| Penukaran | Pulsa (always to the member's registered number): send through your pulsa provider, then **Selesai**. Goods: **Setujui → Kirim** (courier + receipt no.) **→ Selesai**. **Tolak** returns the points automatically. Target: within 3 working days. |
 | Verifikasi retailer | Visit or call the shop, then **Verifikasi**. Cartons scanned earlier enter the 14-day hold from their scan date. |
 | Poin ditahan | Scans above the daily/monthly limit. Approve if normal, reject if suspicious. |
-| Anggota | Search members; adjust points (reason required), **reset a forgotten PIN**, freeze an account. |
+| Anggota | Search members (shows the shop the farmer typed); WA button to chat; adjust points (reason required); freeze an account. |
 | Kode QR | Import, activate/deactivate batches, look up one code (who claimed it, scan history), void a damaged/stolen code. |
 | Hadiah | Add or change rewards, points, stock. Add the retailer catalogue here. |
 | Laporan palsu & flag | Counterfeit reports with photo and map link; automatic fraud flags. |
-| Pengaturan & ekspor | Limits, hold days, point value in Rupiah, WhatsApp number, open/close the program; CSV exports for Excel. |
+| Pengaturan & ekspor | Limits, hold days, point value in Rupiah, WhatsApp number, program name, website address, open/close the program; CSV exports for Excel (including all WhatsApp messages). |
 
 Every admin action is written to the `audit_log` table.
 
@@ -135,7 +193,8 @@ Every admin action is written to the `audit_log` table.
 - More than 10 wrong codes from one network in an hour is blocked for an hour (anti-guessing).
 
 ## Not included yet (next phase)
-- **WhatsApp notifications and WhatsApp OTP login**: needs a WhatsApp Business provider account.
+- **WhatsApp OTP login** (a code sent by WhatsApp at login): can be added on top of the Fonnte connection if phone-only login proves too weak.
+- **Message when retailer points finish the 14-day hold**: not sent yet.
 - **Automatic pulsa sending**: needs a pulsa aggregator API; for now admin sends pulsa and marks it done.
 - **Automatic point expiry** after 12 months: the expiry date is stored on every point; the job that removes expired points is not active yet.
 - **Terms and Privacy Policy pages**: the registration link currently opens WhatsApp. Publish real pages (UU No. 27/2022 PDP) before the pilot.
@@ -149,7 +208,14 @@ GitHub Pages is free.
 ## Security notes
 - All tables are locked (row-level security). Members can only read their own data;
   everything else goes through database functions that check who is calling.
-- PINs are stored hashed by Supabase. Staff log in with email + password: use a long,
-  unique password for every staff account and remove staff who leave (delete their row in the `staff` table).
+- **Phone-only login (version 2) is easier for farmers but weaker**: anyone who knows a
+  member's phone number can open that account. Safeguards built in: pulsa can only go to the
+  registered number; every redemption and status change is sent by WhatsApp to the
+  registered number (the real owner sees it); goods redemptions wait for admin approval, so
+  call the member when an address looks unusual; accounts can be frozen. If misuse appears,
+  add WhatsApp OTP login (see "Not included yet").
+- Staff log in with email + password: use a long, unique password for every staff account
+  and remove staff who leave (delete their row in the `staff` table).
+- The WhatsApp gateway token is write-only (table `secrets`, no access from the website).
 - The list of genuine codes never leaves the database; the public check only answers
   for the one code scanned.

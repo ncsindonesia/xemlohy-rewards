@@ -1,5 +1,5 @@
 -- =====================================================================
--- Xemlohy Smart Rewards - starting data (run once, after 01_schema.sql)
+-- NCS Program Rewards - starting data (run once, after 01_schema.sql)
 -- Values marked "proposed" in the developer brief; change them later in
 -- the admin portal (Pengaturan / Hadiah) without touching this file.
 -- =====================================================================
@@ -14,10 +14,10 @@ insert into public.settings (key, value, note) values
   ('program_open',          'true',            'false = poin belum bisa diklaim, scan hanya cek keaslian')
 on conflict (key) do nothing;
 
-insert into public.products (sku, name, size_ml, farmer_points, retailer_points_per_carton, bottles_per_carton) values
-  ('XEM-100', 'Xemlohy', 100, 10, 24, 24),
-  ('XEM-250', 'Xemlohy', 250, 25, 24, 24),
-  ('XEM-500', 'Xemlohy', 500, 50, 24, 24)
+insert into public.products (sku, name, size_ml, farmer_points, retailer_points_per_carton, bottles_per_carton, description) values
+  ('XEM-100', 'Xemlohy', 100, 10, 24, 24, 'Anti rontok bunga & buah'),
+  ('XEM-250', 'Xemlohy', 250, 25, 24, 24, 'Anti rontok bunga & buah'),
+  ('XEM-500', 'Xemlohy', 500, 50, 24, 24, 'Anti rontok bunga & buah')
 on conflict (sku) do nothing;
 
 insert into public.rewards (catalog, name, description, points, kind, stock, sort)

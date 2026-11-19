@@ -1,7 +1,7 @@
 {
-  "name": "Xemlohy Smart Rewards",
-  "short_name": "Xemlohy Poin",
-  "description": "Scan botol Xemlohy, kumpulkan poin, tukar hadiah.",
+  "name": "NCS Program Rewards",
+  "short_name": "NCS Rewards",
+  "description": "Scan QR produk NCS, kumpulkan poin, tukar hadiah.",
   "start_url": "/akun",
   "scope": "/",
   "display": "standalone",

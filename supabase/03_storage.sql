@@ -1,5 +1,5 @@
 -- =====================================================================
--- Xemlohy Smart Rewards - photo storage for counterfeit reports
+-- NCS Program Rewards - photo storage for counterfeit reports
 -- Run once, after 01_schema.sql. Creates a PRIVATE bucket: anyone can
 -- upload a report photo (max 5 MB, images only); only NCS staff can view.
 -- =====================================================================
